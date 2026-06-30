@@ -1,0 +1,1 @@
+FLOWER COINS is a gamified enterprise task management platform that boosts employee engagement through points, rewards, rankings, and real-time performance tracking. Built with JavaScript, HTML, CSS, and Supabase, it features secure authentication, admin and employee dashboards, automated statistics, and live database synchronization.
