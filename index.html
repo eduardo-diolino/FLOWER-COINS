@@ -1,0 +1,1428 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FLOWER COINS - Plataforma de Tarefas Gamificada</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script>
+        // Wait for Supabase library to load, then initialize
+        let supabaseClient;
+        
+        document.addEventListener('DOMContentLoaded', function() {
+            // Supabase Configuration
+            const SUPABASE_URL = 'https://igvarhcucicjiboxrqdg.supabase.co';
+            const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlndmFyaGN1Y2ljamlib3hycWRnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTE0ODE2OTYsImV4cCI6MjA2NzA1NzY5Nn0.hhb5CwmaNibeE0ngJJvar6BV0xpvMiV3jh9okro79Ys';
+            
+            // Initialize Supabase client after library loads
+            if (typeof supabase !== 'undefined') {
+                supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+                console.log('✅ Cliente Supabase inicializado com sucesso!');
+            } else {
+                console.error('❌ Biblioteca Supabase não carregada');
+            }
+        });
+        
+        // Backend API Configuration (fallback)
+        const BACKEND_URL = 'https://backend.youware.com';
+        
+        // Get user info from Youware platform (fallback)
+        async function getUserInfo() {
+            try {
+                const response = await fetch('https://backend.youware.com/__user_info__');
+                const result = await response.json();
+                if (result.code === 0) {
+                    return result.data;
+                }
+                return null;
+            } catch (error) {
+                console.error('Error getting user info:', error);
+                return null;
+            }
+        }
+    </script>
+    <script src="assets/js/monthly-reset.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Dancing+Script:wght@400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" integrity="sha512-DTOQO9RWCH3ppGqcWaEA1BIZOC6xxalwEsw9c2QQeAIftl+Vegovlnee1c9QX4TctnWMn13TZye+giMm8e2LwA==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+    <style>
+        body {
+            background-size: 400% 400%;
+            background-image: linear-gradient(
+                45deg, 
+                #FFB6C1 0%,
+                #FFE4E1 15%,
+                #DDA0DD 30%,
+                #98FB98 45%,
+                #87CEEB 60%,
+                #F0E68C 75%,
+                #FFA07A 90%,
+                #FFB6C1 100%
+            );
+            min-height: 100vh;
+            font-family: 'Poppins', sans-serif;
+            animation: rainbowBackground 12s ease infinite;
+            position: relative;
+        }
+        
+        @keyframes rainbowBackground {
+            0% { background-position: 0% 50%; }
+            25% { background-position: 100% 25%; }
+            50% { background-position: 100% 75%; }
+            75% { background-position: 0% 100%; }
+            100% { background-position: 0% 50%; }
+        }
+        
+        @keyframes shimmer {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+        
+        body::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.3) 0%, rgba(255, 255, 255, 0) 70%);
+            animation: glowPulse 3s ease-in-out infinite alternate;
+            pointer-events: none;
+            z-index: 1;
+        }
+        
+        /* Falling coins */
+        .falling-coin {
+            position: fixed;
+            z-index: 1;
+            pointer-events: none;
+            animation-name: falling;
+            animation-timing-function: linear;
+            animation-iteration-count: infinite;
+            width: 30px;
+            height: 30px;
+            opacity: 0.9;
+            filter: drop-shadow(0 0 8px rgba(255, 215, 0, 0.7));
+            border-radius: 50%;
+        }
+        
+        @keyframes falling {
+            0% {
+                transform: translateY(-100px) rotate(0deg);
+                opacity: 0;
+            }
+            10% {
+                opacity: 0.8;
+            }
+            100% {
+                transform: translateY(calc(100vh + 100px)) rotate(360deg);
+                opacity: 0.2;
+            }
+        }
+        
+        /* Brilhos musicais */
+        .sparkle {
+            position: fixed;
+            z-index: 1;
+            pointer-events: none;
+            color: #FFD700;
+            animation: sparkleAnimation 2s ease-in-out infinite;
+            font-size: 18px;
+            text-shadow: 0 0 10px rgba(255, 215, 0, 0.8);
+        }
+        
+        .star {
+            position: fixed;
+            z-index: 1;
+            pointer-events: none;
+            color: #FFFFFF;
+            animation: starAnimation 3s ease-in-out infinite;
+            font-size: 14px;
+            text-shadow: 0 0 15px rgba(255, 255, 255, 0.9);
+        }
+        
+        @keyframes sparkleAnimation {
+            0%, 100% { 
+                opacity: 0; 
+                transform: scale(0.5) rotate(0deg);
+            }
+            50% { 
+                opacity: 1; 
+                transform: scale(1.2) rotate(180deg);
+            }
+        }
+        
+        @keyframes starAnimation {
+            0%, 100% { 
+                opacity: 0; 
+                transform: scale(0.3) rotate(0deg);
+            }
+            50% { 
+                opacity: 0.8; 
+                transform: scale(1) rotate(360deg);
+            }
+        }
+        
+        /* Pulsos de luz sincronizados */
+        .music-pulse {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: radial-gradient(circle at 50% 50%, rgba(255, 215, 0, 0.08) 0%, transparent 50%);
+            animation: musicPulse 4s ease-in-out infinite;
+            pointer-events: none;
+            z-index: 1;
+        }
+        
+        @keyframes musicPulse {
+            0%, 100% { 
+                opacity: 0;
+                transform: scale(0.8);
+            }
+            25% { 
+                opacity: 0.4;
+                transform: scale(1.1);
+            }
+            50% { 
+                opacity: 0.1;
+                transform: scale(1);
+            }
+            75% { 
+                opacity: 0.4;
+                transform: scale(1.1);
+            }
+        }
+        
+        @keyframes glowPulse {
+            0% { opacity: 0.2; }
+            100% { opacity: 0.7; }
+        }
+        
+        .content-wrapper {
+            position: relative;
+            z-index: 2;
+        }
+        .font-dancing {
+            font-family: 'Dancing Script', cursive;
+        }
+
+        @keyframes float {
+            0% { transform: translateY(0px); }
+            50% { transform: translateY(-8px); }
+            100% { transform: translateY(0px); }
+        }
+        .float-animation {
+            animation: float 3s ease-in-out infinite;
+        }
+        @keyframes sparkle {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.7; transform: scale(1.2); }
+        }
+        .sparkle-animation {
+            animation: sparkle 2s ease-in-out infinite;
+        }
+        .title-shadow {
+            text-shadow: 3px 3px 6px rgba(0,0,0,0.3), 0 0 40px rgba(255,255,255,0.8);
+            background: linear-gradient(
+                45deg, 
+                #FF6B6B, #FFE66D, #4ECDC4, #45B7D1, 
+                #96CEB4, #FECA57, #FF9FF3, #54A0FF,
+                #5F27CD, #00D2D3, #FF9F43, #EE5A24,
+                #0084FF, #44BD32, #F0932B, #EB4D4B,
+                #6C5CE7, #A55EEA, #26DE81, #FD79A8
+            );
+            background-size: 800% 800%;
+            animation: rainbowShift 4s ease infinite;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            color: transparent;
+            filter: drop-shadow(0 0 20px rgba(255,255,255,0.5));
+        }
+        
+        @keyframes rainbowShift {
+            0% { background-position: 0% 50%; }
+            25% { background-position: 100% 25%; }
+            50% { background-position: 100% 75%; }
+            75% { background-position: 0% 100%; }
+            100% { background-position: 0% 50%; }
+        }
+        
+        .title-3d {
+            transform: perspective(1000px) rotateX(10deg);
+            filter: drop-shadow(0 10px 20px rgba(255,215,0,0.3));
+        }
+        
+        .golden-subtitle {
+            background: linear-gradient(
+                45deg,
+                #FFD700, #FFA500, #FFFF00, #FFD700,
+                #FF8C00, #DAA520, #FFD700, #FFA500
+            );
+            background-size: 400% 400%;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            color: transparent;
+            animation: goldenShimmer 3s ease infinite;
+            text-shadow: 0 2px 10px rgba(255, 215, 0, 0.5);
+            filter: drop-shadow(0 0 15px rgba(255, 215, 0, 0.8));
+        }
+        
+        @keyframes goldenShimmer {
+            0% { background-position: 0% 50%; }
+            25% { background-position: 100% 25%; }
+            50% { background-position: 100% 75%; }
+            75% { background-position: 0% 100%; }
+            100% { background-position: 0% 50%; }
+        }
+        .transparent-bg-image {
+            mix-blend-mode: multiply;
+            filter: contrast(1.1) brightness(1.1);
+        }
+        .mascot-transparent {
+            background: radial-gradient(circle, transparent 60%, rgba(244, 114, 182, 0.3) 100%);
+            border-radius: 50%;
+            padding: 10px;
+        }
+        .remove-white-bg {
+            mix-blend-mode: darken;
+            filter: contrast(1.2) brightness(1.1);
+        }
+        
+        /* Loading spinner */
+        .loading {
+            display: none;
+            width: 20px;
+            height: 20px;
+            border: 2px solid #ffffff;
+            border-top: 2px solid transparent;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="min-h-screen flex items-center justify-center p-4">
+    <!-- Moedas caindo -->
+    <div id="falling-coins-container"></div>
+    
+    <!-- Brilhos musicais -->
+    <div id="sparkles-container"></div>
+    <div class="music-pulse"></div>
+    
+    <!-- Sistema de Áudio - CORRIGIDO -->
+    <audio id="backgroundMusic" loop preload="auto">
+        <source src="y0tpwwoze6.mp3" type="audio/mpeg">
+        <source src="lre0o5ypxo.wav" type="audio/wav">
+        Seu navegador não suporta áudio.
+    </audio>
+    
+    <!-- Controle de Áudio - MELHORADO -->
+    <div id="audioControl" class="fixed bottom-4 right-4 z-40">
+        <button id="audioToggle" class="bg-white bg-opacity-90 hover:bg-opacity-100 text-pink-600 p-3 rounded-full shadow-lg transition-all duration-300 hover:scale-110 focus:outline-none focus:ring-2 focus:ring-pink-500">
+            <i id="audioIcon" class="fas fa-volume-up text-xl"></i>
+        </button>
+    </div>
+    
+    <div class="content-wrapper max-w-md w-full bg-white rounded-xl shadow-xl overflow-hidden relative">
+        <!-- Cabeçalho -->
+        <div class="bg-gradient-to-r from-pink-400 via-pink-500 to-pink-600 p-6 text-white text-center">
+            <!-- Título com decorações -->
+            <div class="flex items-center justify-center space-x-4 mb-4">
+                <!-- Decoração à esquerda -->
+                <div class="hidden sm:flex space-x-2">
+                    <span class="text-2xl sparkle-animation">🌟</span>
+                    <span class="text-xl float-animation">🏆</span>
+                </div>
+                
+                <!-- Título principal -->
+                <h1 class="text-4xl sm:text-5xl font-bold font-dancing leading-relaxed title-shadow title-3d">
+                    FLOWER COINS
+                </h1>
+                
+                <!-- Decoração à direita -->
+                <div class="hidden sm:flex space-x-2">
+                    <span class="text-2xl float-animation">✅</span>
+                    <span class="text-xl sparkle-animation">🌟</span>
+                </div>
+            </div>
+            
+            <!-- Subtítulo Dourado -->
+            <p class="text-lg font-semibold mb-4 golden-subtitle">Conquiste tarefas, ganhe recompensas!</p>
+            
+            <!-- Logo -->
+            <div class="w-32 h-32 mx-auto float-animation">
+                <img src="assets/img/new-logo.jpeg" alt="Logo do Jogo" class="w-full h-full object-contain">
+            </div>
+            
+            <!-- Decorações extras móveis -->
+            <div class="sm:hidden flex justify-center space-x-4 mt-4">
+                <span class="text-xl sparkle-animation">🌟</span>
+                <span class="text-xl float-animation">🏆</span>
+                <span class="text-xl sparkle-animation">✅</span>
+            </div>
+        </div>
+        
+        <!-- Formulário de Login -->
+        <div class="p-6">
+            <!-- Abas de Login -->
+            <div class="flex mb-6 bg-gray-100 rounded-lg p-1">
+                <button id="funcionarioTab" class="flex-1 px-4 py-2 rounded-md text-sm font-medium transition-colors bg-pink-500 text-white">
+                    👤 Funcionário
+                </button>
+                <button id="adminTab" class="flex-1 px-4 py-2 rounded-md text-sm font-medium transition-colors text-gray-600 hover:text-gray-800">
+                    🔐 Administrador
+                </button>
+            </div>
+
+            <form id="loginForm">
+                <div class="mb-4">
+                    <label for="username" class="block text-gray-700 font-semibold mb-2">Nome de usuário</label>
+                    <input type="text" id="username" class="w-full px-4 py-3 rounded-lg border border-gray-300 focus:border-pink-500 focus:ring-2 focus:ring-pink-200 focus:outline-none transition-colors" 
+                           required 
+                           minlength="3" 
+                           maxlength="50" 
+                           pattern="[A-Za-z0-9\s]+" 
+                           title="Nome de usuário deve conter apenas letras, números e espaços">
+                </div>
+                
+                <div class="mb-6">
+                    <label for="password" class="block text-gray-700 font-semibold mb-2">Senha</label>
+                    <div class="relative">
+                        <input type="password" id="password" class="w-full px-4 py-3 rounded-lg border border-gray-300 focus:border-pink-500 focus:ring-2 focus:ring-pink-200 focus:outline-none transition-colors" 
+                               required 
+                               minlength="6" 
+                               maxlength="100"
+                               title="Senha deve ter pelo menos 6 caracteres">
+                        <button type="button" class="password-toggle absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500 hover:text-gray-700 focus:outline-none transition-colors" data-target="password">
+                            <i class="fas fa-eye"></i>
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- Mensagem de erro -->
+                <div id="errorMessage" class="hidden mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded-lg text-sm">
+                </div>
+                
+                <!-- Mensagem de sucesso -->
+                <div id="successMessage" class="hidden mb-4 p-3 bg-green-100 border border-green-400 text-green-700 rounded-lg text-sm">
+                </div>
+                
+                <div class="mb-4 flex items-center">
+                    <input type="checkbox" id="remember" class="rounded text-pink-600 focus:ring-pink-500">
+                    <label for="remember" class="ml-2 text-gray-700">Lembrar de mim</label>
+                </div>
+                
+                <button type="submit" id="loginButton" class="w-full bg-pink-500 text-white py-3 rounded-lg font-semibold hover:bg-pink-600 focus:outline-none focus:ring-2 focus:ring-pink-500 focus:ring-offset-2 transition-colors flex items-center justify-center">
+                    <span id="loginText">Entrar</span>
+                    <div id="loginSpinner" class="loading ml-2"></div>
+                </button>
+            </form>
+            
+            <!-- Link para cadastro -->
+            <div class="mt-4 text-center space-y-2">
+                <button id="forgotPasswordLink" class="text-blue-500 hover:text-blue-600 transition-colors text-sm">
+                    Esqueceu sua senha?
+                </button>
+                <p class="text-gray-600">Novo no FLOWER COINS?</p>
+                <button id="registerLink" class="text-pink-500 font-semibold hover:text-pink-600 transition-colors">
+                    Criar conta de funcionário
+                </button>
+            </div>
+            
+            <!-- Ícones de Gamificação FLOWER COIN -->
+            <div class="mt-6 flex justify-center space-x-8">
+                <div class="text-center">
+                    <img src="assets/img/flower_meta_new.png" alt="FLOWER META" class="w-12 h-12 mx-auto mb-2 sparkle-animation" style="filter: drop-shadow(0 0 10px rgba(255, 215, 0, 0.7));">
+                    <span class="text-sm text-gray-600">FLOWER META</span>
+                </div>
+                <div class="text-center">
+                    <img src="ybatoyctu6.png" alt="FLOWER COIN" class="w-12 h-12 mx-auto mb-2 float-animation" style="filter: drop-shadow(0 0 10px rgba(255, 215, 0, 0.7));">
+                    <span class="text-sm text-gray-600">FLOWER COINS</span>
+                </div>
+                <div class="text-center">
+                    <img src="3yalbc1g9n.png" alt="Assistente Agninha" class="w-12 h-12 mx-auto mb-2 rounded-full float-animation remove-white-bg" style="background: radial-gradient(circle, rgba(244, 114, 182, 0.2) 0%, transparent 70%);">
+                    <span class="text-sm text-gray-600">Assistente</span>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Modal de Cadastro -->
+    <div id="registerModal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50">
+        <div class="bg-white rounded-xl p-6 max-w-md w-full mx-4">
+            <h3 class="text-xl font-bold text-gray-800 mb-4">Criar Conta de Funcionário</h3>
+            <form id="registerForm">
+                <div class="mb-4">
+                    <label for="registerUsername" class="block text-gray-700 font-semibold mb-2">Nome de usuário</label>
+                    <input type="text" id="registerUsername" class="w-full px-4 py-3 rounded-lg border border-gray-300 focus:border-pink-500 focus:ring-2 focus:ring-pink-200 focus:outline-none transition-colors" 
+                           required
+                           minlength="3" 
+                           maxlength="50" 
+                           pattern="[A-Za-z0-9\s]+" 
+                           title="Nome de usuário deve conter apenas letras, números e espaços">
+                </div>
+                
+                <!-- Campo Email removido conforme solicitado -->
+                
+                <div class="mb-4">
+                    <label for="registerPassword" class="block text-gray-700 font-semibold mb-2">Senha</label>
+                    <div class="relative">
+                        <input type="password" id="registerPassword" class="w-full px-4 py-3 rounded-lg border border-gray-300 focus:border-pink-500 focus:ring-2 focus:ring-pink-200 focus:outline-none transition-colors" 
+                               required
+                               minlength="6" 
+                               maxlength="100"
+                               title="Senha deve ter pelo menos 6 caracteres">
+                        <button type="button" class="password-toggle absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500 hover:text-gray-700 focus:outline-none transition-colors" data-target="registerPassword">
+                            <i class="fas fa-eye"></i>
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- Seleção de Setor -->
+                <div class="mb-4">
+                    <label for="registerDepartment" class="block text-gray-700 font-semibold mb-2">Setor</label>
+                    <select id="registerDepartment" class="w-full px-4 py-3 rounded-lg border border-gray-300 focus:border-pink-500 focus:ring-2 focus:ring-pink-200 focus:outline-none transition-colors" required>
+                        <option value="">Selecione seu setor</option>
+                        <option value="1">🏢 ADMINISTRAÇÃO</option>
+                        <option value="2">✂️ CONFECÇÃO</option>
+                    </select>
+                </div>
+                
+                <div id="registerError" class="hidden mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded-lg text-sm"></div>
+                
+                <div class="flex space-x-3">
+                    <button type="button" id="cancelRegister" class="flex-1 bg-gray-300 text-gray-700 py-3 rounded-lg font-semibold hover:bg-gray-400 transition-colors">
+                        Cancelar
+                    </button>
+                    <button type="submit" id="registerButton" class="flex-1 bg-pink-500 text-white py-3 rounded-lg font-semibold hover:bg-pink-600 transition-colors flex items-center justify-center">
+                        <span id="registerText">Criar Conta</span>
+                        <div id="registerSpinner" class="loading ml-2"></div>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    <!-- Modal de Recuperação de Senha -->
+    <div id="forgotPasswordModal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50">
+        <div class="bg-white rounded-xl p-6 max-w-md w-full mx-4">
+            <h3 class="text-xl font-bold text-gray-800 mb-4">Recuperar Senha</h3>
+            
+            <!-- Etapa 1: Solicitar código -->
+            <div id="requestCodeStep">
+                <p class="text-gray-600 mb-4">Digite seu nome de usuário e email para receber um código de recuperação:</p>
+                <div class="mb-4">
+                    <label for="resetUsername" class="block text-gray-700 font-semibold mb-2">Nome de usuário</label>
+                    <input type="text" id="resetUsername" class="w-full px-4 py-3 rounded-lg border border-gray-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 focus:outline-none transition-colors" 
+                           required
+                           minlength="3" 
+                           maxlength="50"
+                           title="Digite seu nome de usuário">
+                </div>
+                <div class="mb-4">
+                    <label for="resetEmail" class="block text-gray-700 font-semibold mb-2">Email</label>
+                    <input type="email" id="resetEmail" class="w-full px-4 py-3 rounded-lg border border-gray-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 focus:outline-none transition-colors" 
+                           required
+                           pattern="[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$"
+                           title="Por favor, insira um email válido">
+                </div>
+                <div class="flex space-x-3">
+                    <button onclick="closeForgotPasswordModal()" class="flex-1 px-4 py-3 bg-gray-500 text-white rounded-lg hover:bg-gray-600 transition-colors">
+                        Cancelar
+                    </button>
+                    <button onclick="sendResetCode()" id="sendCodeButton" class="flex-1 px-4 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors">
+                        <span id="sendCodeText">Enviar Código</span>
+                        <div id="sendCodeSpinner" class="loading ml-2 hidden"></div>
+                    </button>
+                </div>
+            </div>
+            
+            <!-- Etapa 2: Validar código e nova senha -->
+            <div id="resetPasswordStep" class="hidden">
+                <p class="text-gray-600 mb-4">Digite o código recebido no email e sua nova senha:</p>
+                <div class="mb-4">
+                    <label for="resetCode" class="block text-gray-700 font-semibold mb-2">Código (6 dígitos)</label>
+                    <input type="text" id="resetCode" maxlength="6" class="w-full px-4 py-3 rounded-lg border border-gray-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 focus:outline-none transition-colors text-center text-lg" 
+                           placeholder="000000" 
+                           required
+                           pattern="[0-9]{6}"
+                           title="O código deve conter 6 dígitos numéricos">
+                </div>
+                <div class="mb-4">
+                    <label for="newPassword" class="block text-gray-700 font-semibold mb-2">Nova Senha</label>
+                    <div class="relative">
+                        <input type="password" id="newPassword" class="w-full px-4 py-3 rounded-lg border border-gray-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 focus:outline-none transition-colors"
+                               required
+                               minlength="6" 
+                               maxlength="100"
+                               title="Senha deve ter pelo menos 6 caracteres">
+                        <button type="button" class="password-toggle absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500 hover:text-gray-700 focus:outline-none transition-colors" data-target="newPassword">
+                            <i class="fas fa-eye"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="mb-4">
+                    <label for="confirmPassword" class="block text-gray-700 font-semibold mb-2">Confirmar Senha</label>
+                    <div class="relative">
+                        <input type="password" id="confirmPassword" class="w-full px-4 py-3 rounded-lg border border-gray-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 focus:outline-none transition-colors">
+                        <button type="button" class="password-toggle absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500 hover:text-gray-700 focus:outline-none transition-colors" data-target="confirmPassword">
+                            <i class="fas fa-eye"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="flex space-x-3">
+                    <button onclick="backToRequestCode()" class="flex-1 px-4 py-3 bg-gray-500 text-white rounded-lg hover:bg-gray-600 transition-colors">
+                        Voltar
+                    </button>
+                    <button onclick="resetPassword()" id="resetPasswordButton" class="flex-1 px-4 py-3 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors">
+                        <span id="resetPasswordText">Alterar Senha</span>
+                        <div id="resetPasswordSpinner" class="loading ml-2 hidden"></div>
+                    </button>
+                </div>
+            </div>
+            
+            <!-- Mensagens -->
+            <div id="resetError" class="hidden mt-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded-lg text-sm"></div>
+            <div id="resetSuccess" class="hidden mt-4 p-3 bg-green-100 border border-green-400 text-green-700 rounded-lg text-sm"></div>
+        </div>
+    </div>
+    
+    <!-- Container para moedas caindo -->
+    <div id="falling-coins-container"></div>
+
+    <script>
+        // Configuração migrada para Youware Backend
+        const API_BASE_URL = 'https://backend.youware.com';
+        
+        // Helper function for API calls
+        async function apiCall(endpoint, options = {}) {
+            try {
+                const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...options.headers
+                    },
+                    ...options
+                });
+                return await response.json();
+            } catch (error) {
+                console.error('API Error:', error);
+                throw error;
+            }
+        }
+        
+        let isAdminMode = false;
+        
+        // Controle das abas
+        document.getElementById('funcionarioTab').addEventListener('click', function() {
+            isAdminMode = false;
+            this.classList.add('bg-pink-500', 'text-white');
+            this.classList.remove('text-gray-600');
+            document.getElementById('adminTab').classList.remove('bg-pink-500', 'text-white');
+            document.getElementById('adminTab').classList.add('text-gray-600');
+            hideMessages();
+        });
+        
+        document.getElementById('adminTab').addEventListener('click', function() {
+            isAdminMode = true;
+            this.classList.add('bg-pink-500', 'text-white');
+            this.classList.remove('text-gray-600');
+            document.getElementById('funcionarioTab').classList.remove('bg-pink-500', 'text-white');
+            document.getElementById('funcionarioTab').classList.add('text-gray-600');
+            hideMessages();
+        });
+        
+        function hideMessages() {
+            document.getElementById('errorMessage').classList.add('hidden');
+            document.getElementById('successMessage').classList.add('hidden');
+        }
+        
+        function showError(message) {
+            const errorDiv = document.getElementById('errorMessage');
+            errorDiv.textContent = message;
+            errorDiv.classList.remove('hidden');
+            document.getElementById('successMessage').classList.add('hidden');
+        }
+        
+        function showSuccess(message) {
+            const successDiv = document.getElementById('successMessage');
+            successDiv.textContent = message;
+            successDiv.classList.remove('hidden');
+            document.getElementById('errorMessage').classList.add('hidden');
+        }
+        
+        function setLoading(isLoading) {
+            const button = document.getElementById('loginButton');
+            const text = document.getElementById('loginText');
+            const spinner = document.getElementById('loginSpinner');
+            
+            button.disabled = isLoading;
+            text.textContent = isLoading ? 'Entrando...' : 'Entrar';
+            spinner.style.display = isLoading ? 'block' : 'none';
+        }
+        
+        // Departamentos são agora fixos no HTML - função não necessária
+        async function loadDepartmentsForRegister() {
+            // Departamentos já estão definidos no HTML
+            // Apenas deixamos a função para compatibilidade
+        }
+        
+        // Mostrar página de aguardo para solicitação de admin
+        function showAdminRequestPending(username) {
+            document.getElementById('registerModal').classList.add('hidden');
+            
+            // Criar modal de aguardo
+            const pendingModal = document.createElement('div');
+            pendingModal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
+            pendingModal.innerHTML = `
+                <div class="bg-white rounded-xl p-8 max-w-md w-full mx-4 text-center">
+                    <div class="text-6xl mb-4">⏳</div>
+                    <h3 class="text-xl font-bold text-gray-800 mb-4">Solicitação Enviada!</h3>
+                    <p class="text-gray-600 mb-4">
+                        Sua solicitação para conta de <strong>Administrador</strong> foi enviada com sucesso.
+                    </p>
+                    <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+                        <p class="text-sm text-blue-800">
+                            <strong>👤 Usuário:</strong> ${username}<br>
+                            <strong>🏢 Setor:</strong> Administração<br>
+                            <strong>📅 Status:</strong> Aguardando aprovação
+                        </p>
+                    </div>
+                    <p class="text-sm text-gray-500 mb-6">
+                        Um administrador atual precisará aprovar sua solicitação antes que sua conta seja criada.
+                        Você receberá uma confirmação quando isso acontecer.
+                    </p>
+                    <button onclick="closePendingModal()" class="w-full bg-blue-500 text-white py-3 rounded-lg font-semibold hover:bg-blue-600 transition-colors">
+                        Entendi
+                    </button>
+                </div>
+            `;
+            
+            document.body.appendChild(pendingModal);
+            
+            // Função para fechar modal
+            window.closePendingModal = function() {
+                pendingModal.remove();
+                // Limpar formulário
+                document.getElementById('registerForm').reset();
+            };
+        }
+        
+        // ==================== RECUPERAÇÃO DE SENHA ====================
+        
+        // Fechar modal de recuperação
+        function closeForgotPasswordModal() {
+            document.getElementById('forgotPasswordModal').classList.add('hidden');
+            document.getElementById('forgotPasswordModal').classList.remove('flex');
+            clearResetForm();
+        }
+        
+        // Mostrar etapa de solicitar código
+        function showRequestCodeStep() {
+            document.getElementById('requestCodeStep').classList.remove('hidden');
+            document.getElementById('resetPasswordStep').classList.add('hidden');
+            clearResetMessages();
+        }
+        
+        // Voltar para etapa de solicitar código
+        function backToRequestCode() {
+            showRequestCodeStep();
+            document.getElementById('resetCode').value = '';
+            document.getElementById('newPassword').value = '';
+            document.getElementById('confirmPassword').value = '';
+        }
+        
+        // Limpar formulário de recuperação
+        function clearResetForm() {
+            document.getElementById('resetUsername').value = '';
+            document.getElementById('resetEmail').value = '';
+            document.getElementById('resetCode').value = '';
+            document.getElementById('newPassword').value = '';
+            document.getElementById('confirmPassword').value = '';
+            clearResetMessages();
+        }
+        
+        // Limpar mensagens de recuperação
+        function clearResetMessages() {
+            document.getElementById('resetError').classList.add('hidden');
+            document.getElementById('resetSuccess').classList.add('hidden');
+        }
+        
+        // Mostrar erro de recuperação
+        function showResetError(message) {
+            const errorDiv = document.getElementById('resetError');
+            errorDiv.textContent = message;
+            errorDiv.classList.remove('hidden');
+            document.getElementById('resetSuccess').classList.add('hidden');
+        }
+        
+        // Mostrar sucesso de recuperação
+        function showResetSuccess(message) {
+            const successDiv = document.getElementById('resetSuccess');
+            successDiv.textContent = message;
+            successDiv.classList.remove('hidden');
+            document.getElementById('resetError').classList.add('hidden');
+        }
+        
+        // Enviar código de recuperação
+        async function sendResetCode() {
+            const username = document.getElementById('resetUsername').value.trim();
+            const email = document.getElementById('resetEmail').value.trim();
+            const button = document.getElementById('sendCodeButton');
+            const text = document.getElementById('sendCodeText');
+            const spinner = document.getElementById('sendCodeSpinner');
+            
+            if (!username) {
+                showResetError('Por favor, digite seu nome de usuário.');
+                return;
+            }
+            
+            if (!email) {
+                showResetError('Por favor, digite seu email.');
+                return;
+            }
+            
+            clearResetMessages();
+            button.disabled = true;
+            text.textContent = 'Enviando...';
+            spinner.classList.remove('hidden');
+            
+            try {
+                // Verificar se usuário e email existem e coincidem
+                const { data: user } = await supabaseClient
+                    .from('users')
+                    .select('username, email')
+                    .eq('username', username)
+                    .eq('email', email)
+                    .single();
+                
+                if (!user) {
+                    showResetError('Nome de usuário e email não encontrados ou não coincidem.');
+                    return;
+                }
+                
+                // Gerar código de 6 dígitos
+                const resetCode = Math.floor(100000 + Math.random() * 900000).toString();
+                
+                // Salvar código no banco
+                await supabaseClient
+                    .from('password_reset_codes')
+                    .insert({
+                        email: email,
+                        reset_code: resetCode,
+                        expires_at: new Date(Date.now() + 15 * 60 * 1000).toISOString() // 15 minutos
+                    });
+                
+                // Simular envio de email (em produção, usar serviço real)
+                console.log('Código de recuperação:', resetCode);
+                
+                showResetSuccess(`Código enviado para ${email}! Use o código: ${resetCode} (válido por 15 minutos)`);
+                
+                // Ir para próxima etapa
+                setTimeout(() => {
+                    document.getElementById('requestCodeStep').classList.add('hidden');
+                    document.getElementById('resetPasswordStep').classList.remove('hidden');
+                }, 2000);
+                
+            } catch (error) {
+                console.error('Erro ao enviar código:', error);
+                
+                let errorMessage = 'Erro ao enviar código. Tente novamente.';
+                if (error.message) {
+                    errorMessage = 'Erro: ' + translateErrorMessage(error.message);
+                }
+                
+                showResetError(errorMessage);
+            } finally {
+                button.disabled = false;
+                text.textContent = 'Enviar Código';
+                spinner.classList.add('hidden');
+            }
+        }
+        
+        // Redefinir senha
+        async function resetPassword() {
+            const username = document.getElementById('resetUsername').value.trim();
+            const email = document.getElementById('resetEmail').value.trim();
+            const code = document.getElementById('resetCode').value.trim();
+            const newPassword = document.getElementById('newPassword').value;
+            const confirmPassword = document.getElementById('confirmPassword').value;
+            
+            const button = document.getElementById('resetPasswordButton');
+            const text = document.getElementById('resetPasswordText');
+            const spinner = document.getElementById('resetPasswordSpinner');
+            
+            clearResetMessages();
+            
+            // Validações
+            if (!code || code.length !== 6) {
+                showResetError('Digite o código de 6 dígitos.');
+                return;
+            }
+            
+            if (!newPassword || newPassword.length < 4) {
+                showResetError('A nova senha deve ter pelo menos 4 caracteres.');
+                return;
+            }
+            
+            if (newPassword !== confirmPassword) {
+                showResetError('As senhas não coincidem.');
+                return;
+            }
+            
+            button.disabled = true;
+            text.textContent = 'Alterando...';
+            spinner.classList.remove('hidden');
+            
+            try {
+                // Verificar código
+                const { data: resetData } = await supabaseClient
+                    .from('password_reset_codes')
+                    .select('*')
+                    .eq('email', email)
+                    .eq('reset_code', code)
+                    .eq('used', false)
+                    .gt('expires_at', new Date().toISOString())
+                    .single();
+                
+                if (!resetData) {
+                    showResetError('Código inválido ou expirado.');
+                    return;
+                }
+                
+                // Atualizar senha do usuário
+                await supabaseClient
+                    .from('users')
+                    .update({
+                        password_hash: hashPassword(newPassword)
+                    })
+                    .eq('username', username)
+                    .eq('email', email);
+                
+                // Marcar código como usado
+                await supabaseClient
+                    .from('password_reset_codes')
+                    .update({ used: true })
+                    .eq('id', resetData.id);
+                
+                showResetSuccess('Senha alterada com sucesso! Você já pode fazer login.');
+                
+                // Fechar modal após sucesso
+                setTimeout(() => {
+                    closeForgotPasswordModal();
+                }, 3000);
+                
+            } catch (error) {
+                console.error('Erro ao alterar senha:', error);
+                
+                let errorMessage = 'Erro ao alterar senha. Tente novamente.';
+                if (error.message) {
+                    errorMessage = 'Erro: ' + translateErrorMessage(error.message);
+                }
+                
+                showResetError(errorMessage);
+            } finally {
+                button.disabled = false;
+                text.textContent = 'Alterar Senha';
+                spinner.classList.add('hidden');
+            }
+        }
+        
+        // Função para traduzir mensagens de erro
+        function translateErrorMessage(englishMessage) {
+            const translations = {
+                'row-level security policy': 'política de segurança do sistema',
+                'violates': 'viola',
+                'duplicate key': 'chave duplicada',
+                'already exists': 'já existe',
+                'not found': 'não encontrado',
+                'invalid': 'inválido',
+                'constraint': 'restrição',
+                'foreign key': 'chave estrangeira',
+                'not-null': 'campo obrigatório',
+                'permission denied': 'permissão negada',
+                'access denied': 'acesso negado',
+                'authentication failed': 'falha na autenticação',
+                'connection failed': 'falha na conexão',
+                'timeout': 'tempo limite excedido',
+                'network error': 'erro de rede',
+                'server error': 'erro no servidor',
+                'bad request': 'requisição inválida',
+                'unauthorized': 'não autorizado',
+                'forbidden': 'proibido',
+                'not found': 'não encontrado',
+                'conflict': 'conflito',
+                'internal server error': 'erro interno do servidor',
+                'infinite recursion detected': 'recursão infinita detectada',
+                'recursion': 'recursão',
+                'policy': 'política'
+            };
+            
+            let translatedMessage = englishMessage.toLowerCase();
+            
+            // Substituir termos em inglês por português
+            Object.keys(translations).forEach(englishTerm => {
+                const regex = new RegExp(englishTerm, 'gi');
+                translatedMessage = translatedMessage.replace(regex, translations[englishTerm]);
+            });
+            
+            // Capitalizar primeira letra
+            return translatedMessage.charAt(0).toUpperCase() + translatedMessage.slice(1);
+        }
+        
+        // Hash da senha (método simples para demo)
+        function hashPassword(password) {
+            return btoa(password); // Base64 - em produção usar bcrypt
+        }
+        
+        // Verificar se há dados salvos "Lembrar de mim" na inicialização
+        document.addEventListener('DOMContentLoaded', function() {
+            const rememberData = localStorage.getItem('rememberUser');
+            if (rememberData) {
+                try {
+                    const userData = JSON.parse(rememberData);
+                    console.log('Dados "Lembrar de mim" encontrados:', userData);
+                    
+                    // Preencher formulário
+                    document.getElementById('username').value = userData.username || '';
+                    document.getElementById('remember').checked = true;
+                    
+                    // Desativado auto-login para corrigir bug com "TESTE 2"
+                    // O usuário precisará clicar no botão de login manualmente
+                    console.log('Auto-login desativado para evitar problemas com conta TESTE 2');
+                    
+                } catch (error) {
+                    console.error('Erro ao processar dados "Lembrar de mim":', error);
+                    localStorage.removeItem('rememberUser');
+                }
+            }
+        });
+
+        // Sistema de login com Youware Backend
+        document.getElementById('loginForm').addEventListener('submit', async function(event) {
+            event.preventDefault();
+            const username = document.getElementById('username').value.trim();
+            const password = document.getElementById('password').value;
+            const rememberMe = document.getElementById('remember').checked;
+            
+            hideMessages();
+            setLoading(true);
+            
+            try {
+                // Check for admin credentials
+                if (username === 'AGNA COSTA PCP' && password === 'AgPc@2011') {
+                    // Admin login
+                    const adminData = {
+                        username: 'AGNA COSTA PCP',
+                        isAdmin: true,
+                        is_admin: true,
+                        department: 'Administração'
+                    };
+                    
+                    localStorage.setItem('currentUser', JSON.stringify(adminData));
+                    localStorage.setItem('flowerCoinsUser', JSON.stringify(adminData));
+                    
+                    if (rememberMe) {
+                        const rememberData = {
+                            username: username,
+                            isAdmin: true,
+                            autoLogin: true,
+                            isValid: true,
+                            savedAt: new Date().toISOString()
+                        };
+                        localStorage.setItem('rememberUser', JSON.stringify(rememberData));
+                    }
+                    
+                    showSuccess('Login de administrador realizado com sucesso!');
+                    setTimeout(() => {
+                        window.location.href = 'admin.html';
+                    }, 1000);
+                    
+                } else {
+                    // Employee login - validate against Supabase database
+                    try {
+                        console.log('🔐 Tentando login de funcionário:', username);
+                        
+                        // Query user from Supabase database
+                        const { data: users, error } = await supabaseClient
+                            .from('users')
+                            .select('*')
+                            .ilike('username', username.trim())
+                            .limit(1);
+                        
+                        if (error) {
+                            console.error('Erro na consulta Supabase:', error);
+                            throw new Error('Erro na consulta ao banco de dados');
+                        }
+                        
+                        if (!users || users.length === 0) {
+                            throw new Error('Usuário não encontrado');
+                        }
+                        
+                        const user = users[0];
+                        console.log('👤 Usuário encontrado:', user.username);
+                        
+                        // Validate password
+                        if (user.password_hash !== password) {
+                            console.log('❌ Senha incorreta');
+                            throw new Error('Senha incorreta');
+                        }
+                        
+                        console.log('✅ Login validado com sucesso!');
+                        
+                        // Check if user is admin
+                        if (user.is_admin) {
+                            const adminData = {
+                                id: user.id,
+                                username: user.username,
+                                isAdmin: true,
+                                is_admin: true,
+                                department: user.department || 'Administração',
+                                avatar_url: user.avatar_url
+                            };
+                            
+                            localStorage.setItem('currentUser', JSON.stringify(adminData));
+                            localStorage.setItem('flowerCoinsUser', JSON.stringify(adminData));
+                            
+                            if (rememberMe) {
+                                const rememberData = {
+                                    username: username,
+                                    isAdmin: true,
+                                    autoLogin: true,
+                                    isValid: true,
+                                    savedAt: new Date().toISOString()
+                                };
+                                localStorage.setItem('rememberUser', JSON.stringify(rememberData));
+                            }
+                            
+                            showSuccess('Login de administrador realizado com sucesso!');
+                            setTimeout(() => {
+                                window.location.href = 'admin.html';
+                            }, 1000);
+                            
+                        } else {
+                            // Regular employee
+                            const employeeData = {
+                                id: user.id,
+                                username: user.username,
+                                display_name: user.username,
+                                isAdmin: false,
+                                is_admin: false,
+                                department: user.department || 'Funcionário',
+                                avatar_url: user.avatar_url,
+                                avatar: user.avatar,
+                                password_hash: user.password_hash
+                            };
+                            
+                            localStorage.setItem('currentUser', JSON.stringify(employeeData));
+                            localStorage.setItem('flowerCoinsUser', JSON.stringify(employeeData));
+                            
+                            if (rememberMe) {
+                                const rememberData = {
+                                    username: username,
+                                    isAdmin: false,
+                                    autoLogin: true,
+                                    isValid: true,
+                                    savedAt: new Date().toISOString()
+                                };
+                                localStorage.setItem('rememberUser', JSON.stringify(rememberData));
+                            }
+                            
+                            showSuccess('Login realizado com sucesso!');
+                            setTimeout(() => {
+                                window.location.href = 'funcionario.html';
+                            }, 1000);
+                        }
+                        
+                    } catch (dbError) {
+                        console.error('Erro na validação:', dbError);
+                        if (dbError.message.includes('Usuário não encontrado')) {
+                            showError('Usuário não encontrado. Verifique o nome de usuário.');
+                        } else if (dbError.message.includes('Senha incorreta')) {
+                            showError('Senha incorreta. Tente novamente.');
+                        } else {
+                            showError('Erro ao validar credenciais: ' + dbError.message);
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error('Erro no login:', error);
+                showError('Erro no sistema. Tente novamente.');
+            } finally {
+                setLoading(false);
+            }
+        });
+        
+        // Configurar chuva de FLOWER COINS e FLOWER METAS
+        function setupCoinAnimation() {
+            const coinContainer = document.getElementById('falling-coins-container');
+            const coinImages = [
+                'ybatoyctu6.png',               // FLOWER COIN
+                'assets/img/flower_meta_new.png' // FLOWER META
+            ];
+            
+            function createCoin() {
+                const coin = document.createElement('img');
+                // Seleciona aleatoriamente entre FLOWER COIN e FLOWER META
+                const coinType = Math.random() > 0.5 ? 0 : 1;
+                coin.src = coinImages[coinType];
+                coin.classList.add('falling-coin');
+                coin.style.left = Math.random() * window.innerWidth + 'px';
+                coin.style.animationDuration = (Math.random() * 3 + 4) + 's';
+                coin.style.width = '25px';
+                coin.style.height = '25px';
+                coin.style.transform = 'rotate(' + Math.random() * 360 + 'deg)';
+                
+                // Brilho dourado para FLOWER COIN, roxo para FLOWER META
+                const glowColor = coinType === 0 ? 
+                    'rgba(255, 215, 0, 0.8)' :   // Dourado
+                    'rgba(138, 43, 226, 0.8)';   // Roxo
+                    
+                coin.style.filter = `drop-shadow(0 0 8px ${glowColor})`;
+                
+                coinContainer.appendChild(coin);
+                
+                setTimeout(() => {
+                    coin.remove();
+                }, 8000);
+            }
+            
+            // Criar moedas a cada segundo
+            setInterval(createCoin, 1000);
+        }
+
+        // Iniciar animações quando a página carrega
+        document.addEventListener('DOMContentLoaded', function() {
+            setupCoinAnimation();
+        });
+
+        // Modal de cadastro
+        document.getElementById('registerLink').addEventListener('click', async function() {
+            await loadDepartmentsForRegister();
+            document.getElementById('registerModal').classList.remove('hidden');
+            document.getElementById('registerModal').classList.add('flex');
+        });
+        
+        // Modal de recuperação de senha
+        document.getElementById('forgotPasswordLink').addEventListener('click', function() {
+            document.getElementById('forgotPasswordModal').classList.remove('hidden');
+            document.getElementById('forgotPasswordModal').classList.add('flex');
+            showRequestCodeStep();
+        });
+        
+        document.getElementById('cancelRegister').addEventListener('click', function() {
+            document.getElementById('registerModal').classList.add('hidden');
+            document.getElementById('registerModal').classList.remove('flex');
+            document.getElementById('registerForm').reset();
+            document.getElementById('registerError').classList.add('hidden');
+        });
+        
+        document.getElementById('registerForm').addEventListener('submit', async function(event) {
+            event.preventDefault();
+            // Permitir qualquer formato de nome (maiúsculo, minúsculo, múltiplas palavras, etc.)
+            const username = document.getElementById('registerUsername').value.trim();
+            const password = document.getElementById('registerPassword').value;
+            const departmentId = document.getElementById('registerDepartment').value;
+            
+            const registerButton = document.getElementById('registerButton');
+            const registerText = document.getElementById('registerText');
+            const registerSpinner = document.getElementById('registerSpinner');
+            const registerError = document.getElementById('registerError');
+            
+            registerError.classList.add('hidden');
+            registerButton.disabled = true;
+            registerText.textContent = 'Criando...';
+            registerSpinner.style.display = 'block';
+            
+            try {
+                // Verificar se o Supabase está disponível
+                if (!supabaseClient) {
+                    registerError.textContent = 'Sistema não está pronto. Aguarde um momento e tente novamente.';
+                    registerError.classList.remove('hidden');
+                    return;
+                }
+                
+                // Validações básicas (permitindo qualquer formato de nome)
+                if (!username || username.length < 2) {
+                    registerError.textContent = 'Nome deve ter pelo menos 2 caracteres!';
+                    registerError.classList.remove('hidden');
+                    return;
+                }
+                
+                if (!password || password.length < 4) {
+                    registerError.textContent = 'Senha deve ter pelo menos 4 caracteres!';
+                    registerError.classList.remove('hidden');
+                    return;
+                }
+                
+                if (!departmentId) {
+                    registerError.textContent = 'Por favor, selecione um setor!';
+                    registerError.classList.remove('hidden');
+                    return;
+                }
+                
+                // Validação PIX removida
+                
+                // Verificar se o usuário já existe (case-insensitive com ilike)
+                const { data: existingUser } = await supabaseClient
+                    .from('users')
+                    .select('username')
+                    .ilike('username', username)
+                    .single();
+                
+                if (existingUser) {
+                    registerError.textContent = 'Nome de usuário já existe!';
+                    registerError.classList.remove('hidden');
+                    return;
+                }
+                
+                // Verificar se é setor Administração (agora por valor direto)
+                if (departmentId === '1') { // ID 1 = ADMINISTRAÇÃO
+                    // Criar solicitação de administrador em vez de usuário - VERSÃO CORRIGIDA
+                    const adminRequestData = {
+                        username: username,
+                        password_hash: hashPassword(password)
+                    };
+                    
+                    // A coluna pix_key não existe na tabela admin_requests - removido
+                    // A coluna email não existe na tabela admin_requests - removido
+                    
+                    const { error: requestError } = await supabaseClient
+                        .from('admin_requests')
+                        .insert(adminRequestData);
+                    
+                    if (requestError) {
+                        registerError.textContent = 'Erro ao enviar solicitação: ' + requestError.message;
+                        registerError.classList.remove('hidden');
+                        return;
+                    }
+                    
+                    // Mostrar página de aguardo
+                    showAdminRequestPending(username);
+                    return;
+                }
+                
+                // Criar funcionário normal - VERSÃO CORRIGIDA
+                const userData = {
+                    username: username,
+                    password_hash: password, // Para funcionários, guardar senha direta
+                    department: departmentId === '2' ? 'CONFECÇÃO' : 'OUTRO',
+                    is_admin: false
+                };
+                
+                // A coluna pix_key não existe na tabela users - removido
+                // A coluna email não existe na tabela users - removido
+                
+                const { error: insertError } = await supabaseClient
+                    .from('users')
+                    .insert(userData);
+                
+                if (insertError) {
+                    registerError.textContent = 'Erro ao criar conta: ' + translateErrorMessage(insertError.message);
+                    registerError.classList.remove('hidden');
+                    return;
+                }
+                
+                // Sucesso - fechar modal e mostrar mensagem
+                document.getElementById('registerModal').classList.add('hidden');
+                document.getElementById('registerModal').classList.remove('flex');
+                
+                showSuccess(`Conta de funcionário criada com sucesso! Bem-vindo(a), ${username}!`);
+                
+                // Limpar formulário
+                document.getElementById('registerForm').reset();
+                
+            } catch (error) {
+                console.error('Erro ao registrar usuário:', error);
+                
+                let errorMessage = 'Erro ao criar conta. Tente novamente.';
+                if (error.message) {
+                    errorMessage = 'Erro: ' + translateErrorMessage(error.message);
+                }
+                
+                registerError.textContent = errorMessage;
+                registerError.classList.remove('hidden');
+            } finally {
+                registerButton.disabled = false;
+                registerText.textContent = 'Criar Conta';
+                registerSpinner.style.display = 'none';
+            }
+        });
+        
+        // Toggle para mostrar/esconder senhas
+        document.addEventListener('click', function(e) {
+            if (e.target.classList.contains('password-toggle') || e.target.closest('.password-toggle')) {
+                e.preventDefault();
+                
+                const button = e.target.closest('.password-toggle');
+                const targetId = button.getAttribute('data-target');
+                const input = document.getElementById(targetId);
+                const icon = button.querySelector('i');
+                
+                if (input.type === 'password') {
+                    input.type = 'text';
+                    icon.classList.remove('fa-eye');
+                    icon.classList.add('fa-eye-slash');
+                } else {
+                    input.type = 'password';
+                    icon.classList.remove('fa-eye-slash');
+                    icon.classList.add('fa-eye');
+                }
+            }
+        });
+        
+        // Controle de áudio
+        document.addEventListener('DOMContentLoaded', function() {
+            const audio = document.getElementById('backgroundMusic');
+            const audioToggle = document.getElementById('audioToggle');
+            const audioIcon = document.getElementById('audioIcon');
+            
+            let isPlaying = false;
+            
+            audioToggle.addEventListener('click', async function() {
+                if (isPlaying) {
+                    // Pausar música
+                    audio.pause();
+                    audioIcon.classList.remove('fa-volume-up');
+                    audioIcon.classList.add('fa-volume-mute');
+                    isPlaying = false;
+                } else {
+                    // Tentar tocar música
+                    try {
+                        await audio.play();
+                        audioIcon.classList.remove('fa-volume-mute');
+                        audioIcon.classList.add('fa-volume-up');
+                        isPlaying = true;
+                    } catch (error) {
+                        console.log('Não foi possível reproduzir áudio:', error);
+                        // Deixar o ícone como mute se não conseguir tocar
+                        audioIcon.classList.remove('fa-volume-up');
+                        audioIcon.classList.add('fa-volume-mute');
+                    }
+                }
+            });
+            
+            // Verificar se o áudio foi carregado
+            audio.addEventListener('canplaythrough', function() {
+                console.log('Áudio carregado e pronto para reprodução');
+            });
+            
+            audio.addEventListener('error', function() {
+                console.log('Erro ao carregar áudio');
+                audioIcon.classList.remove('fa-volume-up');
+                audioIcon.classList.add('fa-volume-mute');
+            });
+        });
+    </script>
+</body>
+</html>

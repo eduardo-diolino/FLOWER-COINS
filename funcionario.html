@@ -1,0 +1,2743 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FLOWER COINS - Painel do Funcionário</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="assets/js/main.js"></script>
+    <script src="sync_manager.js"></script>
+    <script src="assets/js/flower-ind.js"></script>
+    <script src="assets/js/monthly-reset.js"></script>
+    <script>
+        const BACKEND_URL = window.BACKEND_URL || 'https://backend.youware.com';
+        // Usar variáveis globais já declaradas em main.js
+        let employeeUser = null;
+        let employeeStats = null;
+        let employeeTasks = [];
+        let employeeProgress = [];
+        let employeePenalties = [];
+        let employeeSync;
+        let penaltiesListenerRegistered = false;
+        let agninhaCloudCycleTimeout = null;
+        let agninhaCloudHideTimeout = null;
+        let agninhaCloudResumeTimeout = null;
+        let agninhaLastCloudIndex = -1;
+        const MONTH_NAMES_PT = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+        let currentMonth = new Date().getMonth();
+        let currentYear = new Date().getFullYear();
+
+        // Inicializar sistema
+        document.addEventListener('DOMContentLoaded', async function() {
+            console.log('🌸 Iniciando painel do funcionário...');
+            
+            // Delegação de eventos para navegação do menu (funciona mesmo com CSP)
+            const navMenu = document.querySelector('.nav-menu');
+            if (navMenu) {
+                navMenu.addEventListener('click', (evt) => {
+                    const btn = evt.target.closest('.nav-button');
+                    if (!btn) return;
+                    evt.preventDefault();
+                    const section = btn.getAttribute('data-section');
+                    if (section === 'logout') {
+                        logout();
+                        return;
+                    }
+                    if (typeof window.showSection === 'function') {
+                        window.showSection(section, btn);
+                    }
+                });
+            }
+
+            // Aguardar sync manager e sistema principal
+            const waitForSync = setInterval(() => {
+                if (window.getFlowerCoinsSync && window.getFlowerCoinsSync() && window.FLOWER_COINS) {
+                    clearInterval(waitForSync);
+                    employeeSync = window.getFlowerCoinsSync();
+                    loadEmployeePanel();
+                }
+            }, 100);
+        });
+
+        async function loadEmployeePanel() {
+            try {
+                // Verificar se está logado ou usar dados de teste com OSIANE GOMES
+                employeeUser = JSON.parse(localStorage.getItem('currentUser') || 'null');
+                
+                if (!employeeUser || !employeeUser.username) {
+                    console.log('🧪 Simulando login com OSIANE GOMES para teste...');
+                    employeeUser = {
+                        username: 'OSIANE GOMES',
+                        department: 'CONFECÇÃO',
+                        is_admin: false,
+                        avatar_url: null,
+                        password_hash: 'PEDROB10'
+                    };
+                }
+
+                const normalize = (s) => (s || '').normalize('NFD').replace(/\p{Diacritic}/gu, '').trim().toUpperCase();
+                const allUsers = employeeSync.getCachedUsers ? employeeSync.getCachedUsers() : [];
+                const matchedUser = allUsers.find(u => normalize(u.username) === normalize(employeeUser.username));
+                if (matchedUser) {
+                    employeeUser.id = matchedUser.id;
+                    employeeUser.department = matchedUser.department;
+                    employeeUser.avatar_url = matchedUser.avatar_url;
+                }
+                localStorage.setItem('currentUser', JSON.stringify(employeeUser));
+
+                console.log('👤 Funcionário logado:', employeeUser.username);
+                
+                // Aguardar sincronização
+                await employeeSync.fullSync();
+                
+                // Carregar dados do usuário
+                await loadUserData();
+                
+                // Garantir sincronização inicial de penalidades
+                if (employeeSync && typeof employeeSync.syncPenalties === 'function') {
+                    await employeeSync.syncPenalties();
+                }
+                
+                // Configurar listeners para penalidades
+                setupPenaltiesListener();
+                
+                // Renderizar interface
+                renderEmployeeInterface();
+                
+                // Configurar chat com saudação automática
+                initializeChat();
+
+                // Exibir frase motivacional diária
+                // Frase motivacional será combinada no balão da Agninha
+
+                
+                console.log('✅ Painel do funcionário carregado!');
+                
+            } catch (error) {
+                console.error('Erro ao carregar painel do funcionário:', error);
+                showNotification('Erro ao carregar painel', 'error');
+            }
+        }
+
+        async function loadUserData() {
+            try {
+                if (!employeeSync) return;
+
+                employeeTasks = employeeSync.getCachedTasks();
+                const allStats = employeeSync.getCachedStats();
+                const allProgress = employeeSync.getCachedProgress();
+                let allPenalties = typeof employeeSync.getCachedPenalties === 'function' ? employeeSync.getCachedPenalties() : [];
+                const allUsers = employeeSync.getCachedUsers ? employeeSync.getCachedUsers() : [];
+
+                // Resolver ID do funcionário por nome (tolerante a maiúsculas/acentos)
+                const normalize = (s) => (s || '').normalize('NFD').replace(/\p{Diacritic}/gu, '').trim().toUpperCase();
+                const nameKey = normalize(employeeUser.username);
+
+                const matchedUser = allUsers.find(u => normalize(u.username) === nameKey);
+                const resolvedId = matchedUser ? matchedUser.id : employeeUser.id;
+
+                if (matchedUser) {
+                    employeeUser.id = resolvedId;
+                    localStorage.setItem('currentUser', JSON.stringify(employeeUser));
+                }
+
+                // Selecionar estatísticas pelo ID resolvido
+                employeeStats = allStats.find(s => s.user_id === resolvedId) || {
+                    user_id: resolvedId,
+                    total_points: 0,
+                    total_money: 0,
+                    level_num: 1,
+                    tasks_completed: 0,
+                    current_streak: 0,
+                    longest_streak: 0,
+                    flower_coins_distributed: 0,
+                    flowers_meta_distributed: 0
+                };
+                
+                employeeProgress = allProgress.filter(p => p.user_id === resolvedId);
+
+                allPenalties = Array.isArray(allPenalties) ? allPenalties : [];
+
+                console.log('📥 Penalidades obtidas:', {
+                    cache: allPenalties.length,
+                    exemplos: allPenalties.slice(0, 3)
+                });
+
+                employeePenalties = buildEmployeePenalties(allPenalties);
+                renderPenaltiesList();
+
+                if (!employeePenalties.length) {
+                    console.warn('⚠️ Nenhuma penalidade encontrada para o usuário', employeeUser.username, allPenalties);
+                } else {
+                    console.log('✅ Penalidades processadas para', employeeUser.username, employeePenalties);
+                }
+
+                console.log('📊 Dados do usuário carregados:', {
+                    user: employeeUser.username,
+                    stats: employeeStats,
+                    tasks: employeeTasks.length,
+                    progress: employeeProgress.length,
+                    penalties: employeePenalties.length
+                });
+                
+            } catch (error) {
+                console.error('Erro ao carregar dados do usuário:', error);
+            }
+        }
+
+        function setupPenaltiesListener() {
+            if (penaltiesListenerRegistered) return;
+            penaltiesListenerRegistered = true;
+
+            window.addEventListener('flowerCoins:penaltiesUpdated', (event) => {
+                if (!employeeUser) return;
+                const updatedPenalties = Array.isArray(event.detail) ? event.detail : [];
+                employeePenalties = buildEmployeePenalties(updatedPenalties);
+                renderPenaltiesList();
+                console.log('🔄 Penalidades atualizadas (evento):', updatedPenalties);
+            });
+        }
+
+        function buildEmployeePenalties(allPenalties = []) {
+            if (!employeeUser || !employeeUser.id) return [];
+
+            const normalizedUserId = (employeeUser.id || '').toString();
+
+            const filtered = (allPenalties || [])
+                .filter(penalty => {
+                    if (!penalty) return false;
+
+                    const penaltyUserId = (penalty.user_id || '').toString();
+                    const penaltyAction = (penalty.action || '').toLowerCase();
+
+                    if (!penaltyUserId) return false;
+                    if (penaltyUserId !== normalizedUserId) return false;
+                    if (penaltyAction && penaltyAction !== 'deduct') return false;
+
+                    return true;
+                });
+
+            if (!filtered.length) return [];
+
+            const normalized = filtered
+                .map(penalty => {
+                    const rawDate = penalty.created_at || penalty.createdAt;
+                    const parsedDate = rawDate ? new Date(rawDate) : new Date();
+                    const monthIndex = parsedDate.getMonth();
+                    const year = parsedDate.getFullYear();
+                    const normalizedType = (penalty.type || '').toLowerCase();
+                    const normalizedAmount = Number(penalty.amount || 0);
+                    const normalizedReason = penalty.reason || '';
+                    const adminName = penalty.admin_name || penalty.admin_full_name || penalty.admin_username || '';
+                    return {
+                        ...penalty,
+                        parsedDate,
+                        monthIndex,
+                        year,
+                        normalizedType,
+                        normalizedAmount,
+                        normalizedReason,
+                        adminName,
+                        uniqueKey: `${penalty.id || penalty.created_at || Date.now()}`
+                    };
+                })
+                .sort((a, b) => b.parsedDate - a.parsedDate);
+
+            const groupsMap = new Map();
+            normalized.forEach(entry => {
+                const key = `${entry.year}-${entry.monthIndex}`;
+                if (!groupsMap.has(key)) {
+                    groupsMap.set(key, {
+                        key,
+                        monthIndex: entry.monthIndex,
+                        year: entry.year,
+                        label: `${MONTH_NAMES_PT[entry.monthIndex]} de ${entry.year}`,
+                        entries: []
+                    });
+                }
+                groupsMap.get(key).entries.push(entry);
+            });
+
+            const groups = Array.from(groupsMap.values()).sort(
+                (a, b) => new Date(b.year, b.monthIndex, 1) - new Date(a.year, a.monthIndex, 1)
+            );
+
+            groups.forEach(group => {
+                group.entries.sort((a, b) => b.parsedDate - a.parsedDate);
+            });
+
+            return groups;
+        }
+
+        function formatPenaltyDetails(entry) {
+            const normalizedType = (entry.normalizedType || entry.type || '').toLowerCase();
+            const isFlowerCoins = normalizedType === 'flower_coins' || normalizedType === 'coins';
+            const typeLabel = isFlowerCoins ? 'Flower Coins' : 'Flower Meta';
+            const icon = isFlowerCoins ? '🪙 ' : '🌸 ';
+            const amountNumber = Number(entry.normalizedAmount || entry.amount || 0);
+            const amountLabel = isFlowerCoins
+                ? `${amountNumber.toLocaleString('pt-BR')} pontos`
+                : `${amountNumber.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} metas`;
+            return { typeLabel, icon, amountLabel };
+        }
+
+        function escapeHtml(value) {
+            if (!value) return '';
+            return value.replace(/[&<>"']/g, (char) => ({
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#39;'
+            }[char]));
+        }
+
+        function renderPenaltiesList() {
+            const container = document.getElementById('penaltiesList');
+            if (!container) {
+                console.warn('⚠️ penaltiesList não encontrado');
+                return;
+            }
+
+            const groups = Array.isArray(employeePenalties) ? employeePenalties : [];
+
+            if (!groups.length) {
+                container.innerHTML = '<div class="penalty-empty">Nenhuma penalidade registrada até o momento.</div>';
+                return;
+            }
+
+            container.innerHTML = groups.map(group => {
+                const monthEntries = group.entries.map(entry => {
+                    const detail = formatPenaltyDetails(entry);
+                    const dateText = entry.parsedDate.toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' });
+                    const timeText = entry.parsedDate.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+                    const reasonText = escapeHtml(entry.normalizedReason || 'Sem motivo informado');
+                    const adminName = escapeHtml(entry.admin_name || entry.admin_full_name || entry.admin_username || 'Admin');
+
+                    return `
+                        <div class="penalty-entry" data-penalty-key="${entry.uniqueKey || ''}">
+                            <div>
+                                <div class="penalty-entry-title">${detail.icon}${detail.typeLabel}</div>
+                                <div class="penalty-entry-reason">${reasonText}</div>
+                                <div class="penalty-entry-admin">Responsável: ${adminName}</div>
+                            </div>
+                            <div class="penalty-entry-date">
+                                <div class="penalty-entry-amount">-${detail.amountLabel}</div>
+                                <div>${dateText}</div>
+                                <div>${timeText}</div>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+
+                return `
+                    <div class="penalty-group">
+                        <div class="penalty-month-title">
+                            <span>${group.label}</span>
+                            <span>${group.entries.length} penalidade${group.entries.length > 1 ? 's' : ''}</span>
+                        </div>
+                        ${monthEntries}
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function renderEmployeeInterface() {
+            updateProfileInfo();
+            renderAvailableTasks();
+            renderUserStats();
+            renderRanking();
+            renderPenaltiesList();
+        }
+
+        function updateProfileInfo() {
+            const nameElement = document.getElementById('employeeName');
+            const flowerCoinsElement = document.getElementById('flowerCoinsAmount');
+            const flowerMetaElement = document.getElementById('flowerMetaAmount');
+            const profilePicture = document.getElementById('profilePicture');
+
+            if (nameElement) nameElement.textContent = employeeUser.username;
+            
+            // Mostrar contagens distribuídas (FC/FM) com fallback
+            const coinsVal = Number(employeeStats.flower_coins_distributed ?? employeeStats.total_points ?? 0);
+            const metaVal = Number(employeeStats.flowers_meta_distributed ?? employeeStats.meta_points ?? 0);
+            if (flowerCoinsElement) flowerCoinsElement.textContent = coinsVal.toFixed(0);
+            if (flowerMetaElement) flowerMetaElement.textContent = metaVal.toFixed(0);
+            
+            // Atualizar foto do perfil - buscar do usuário atual ou usar padrão
+            if (profilePicture) {
+                if (employeeUser.avatar_url && employeeUser.avatar_url.trim()) {
+                    profilePicture.src = employeeUser.avatar_url;
+                } else if (employeeUser.avatar && employeeUser.avatar.trim()) {
+                    profilePicture.src = employeeUser.avatar;
+                } else {
+                    // Foto padrão baseada na primeira letra do nome
+                    profilePicture.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(employeeUser.username)}&size=120&background=ff6b9d&color=ffffff&font-size=0.4`;
+                }
+            }
+        }
+
+        function renderAvailableTasks() {
+            const container = document.getElementById('tasksList');
+            if (!container) return;
+
+            const today = new Date().toISOString().split('T')[0];
+
+            const safeTasks = Array.isArray(employeeTasks) ? employeeTasks : [];
+            const tasksHtml = safeTasks.map(task => {
+                const completedToday = employeeProgress.some(p => 
+                    p.task_id === task.id && p.completed_at && p.completed_at.startsWith(today)
+                );
+
+                return `
+                    <div class="task-item ${completedToday ? 'completed' : ''}">
+                        <div class="task-header">
+                            <div class="task-title">${task.title || 'Tarefa'}</div>
+                            <div class="task-points">${task.points ?? 0} pontos</div>
+                        </div>
+                        <div class="task-description">${task.description || ''}</div>
+                        <div class="task-footer">
+                            <div class="task-status">
+                                ${completedToday ? 
+                                    '<span style="color: #4CAF50; font-weight: bold; font-size: 0.9rem;">✓ Tarefa Concluída Hoje</span>' : 
+                                    '<span style="color: #666; font-size: 0.9rem;">📋 Tarefa Disponível</span>'
+                                }
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            container.innerHTML = tasksHtml || '<div class="task-item">Nenhuma tarefa disponível no momento.</div>';
+        }
+
+        // Flower Meta tasks (employee-specific)
+        async function renderMetaTasks() {
+            const container = document.getElementById('tasksMetaList');
+            if (!container) return;
+
+            // Prefer sync cache (Supabase). Fallback to backend endpoint
+            let metaTasks = [];
+            try {
+                if (employeeSync && typeof employeeSync.getCachedMetaTasks === 'function') {
+                    const cached = employeeSync.getCachedMetaTasks();
+                    const userId = (employeeUser?.id || '').toString();
+                    metaTasks = (cached || []).filter(t => (t.assigned_to_user_id || '').toString() === userId);
+                }
+            } catch (e) { console.warn('Cache meta tasks indisponível', e); }
+
+            if ((!metaTasks || metaTasks.length === 0) && typeof BACKEND_URL !== 'undefined') {
+                try {
+                    const userId = (employeeUser?.id || '').toString();
+                    const resp = await fetch(`${BACKEND_URL}/api/meta-tasks?user_id=${encodeURIComponent(userId)}`);
+                    if (resp.ok) {
+                        const result = await resp.json();
+                        metaTasks = (result.tasks || []).filter(t => (t.assigned_to_user_id || '').toString() === userId);
+                    }
+                } catch (e) { console.warn('Falha ao buscar meta tasks no backend', e); }
+            }
+
+            if (!Array.isArray(metaTasks) || metaTasks.length === 0) {
+                container.innerHTML = '<div class="task-item">Nenhuma tarefa Meta disponível para você.</div>';
+                return;
+            }
+
+            const html = metaTasks.map((task) => {
+                const isCompleted = !!task.is_completed;
+                const points = task.points ?? task.flower_meta ?? 0;
+                return `
+                    <div class="task-item ${isCompleted ? 'completed' : ''}" data-meta-id="${task.id}">
+                        <div class="task-header">
+                            <div class="task-title">${task.title || 'Tarefa Meta'}</div>
+                            <div class="task-points">⭐ ${points} meta</div>
+                        </div>
+                        <div class="task-description">${task.description || ''}</div>
+                        <div class="task-footer">
+                            ${isCompleted ? 
+                                '<span style="color: #4CAF50; font-weight: bold; font-size: 0.9rem;">✓ Concluída</span>' : 
+                                `<button class="complete-task-btn" onclick="completeMetaTask('${task.id}', ${points})">Concluir</button>`
+                            }
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            container.innerHTML = html;
+        }
+
+        async function completeMetaTask(metaTaskId, points) {
+            try {
+                // Prefer Supabase: marcar como concluída e somar pontos Meta
+                if (employeeSync && employeeUser?.id) {
+                    const supabaseClient = employeeSync.client;
+                    await supabaseClient.from('meta_tasks')
+                        .update({ is_completed: true, completed_at: new Date().toISOString() })
+                        .eq('id', metaTaskId);
+
+                    // Atualizar estatísticas: flowers_meta_distributed
+                    const { data: stats } = await supabaseClient
+                        .from('user_stats')
+                        .select('*')
+                        .eq('user_id', employeeUser.id)
+                        .single();
+
+                    const newMeta = (stats?.flowers_meta_distributed || 0) + (points || 0);
+                    await supabaseClient
+                        .from('user_stats')
+                        .update({ flowers_meta_distributed: newMeta, updated_at: new Date().toISOString() })
+                        .eq('user_id', employeeUser.id);
+
+                    await employeeSync.syncUserStats();
+                    await employeeSync.syncMetaTasks?.();
+                } else if (typeof BACKEND_URL !== 'undefined') {
+                    // Fallback to backend
+                    await fetch(`${BACKEND_URL}/api/meta-tasks/complete`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ task_id: metaTaskId })
+                    });
+                }
+
+                showNotification('Tarefa Meta concluída! ⭐', 'success');
+                renderMetaTasks();
+            } catch (error) {
+                console.error('Erro ao concluir meta task:', error);
+                showNotification('Erro ao concluir tarefa Meta', 'error');
+            }
+        }
+
+        function renderUserStats() {
+            const pointsInLevel = employeeStats.total_points % 100;
+            const progressPercent = (pointsInLevel / 100) * 100;
+            
+            // Atualizar barra de progresso de nível
+            const progressBar = document.querySelector('.level-progress-bar');
+            if (progressBar) {
+                progressBar.style.width = progressPercent + '%';
+            }
+
+            // Atualizar texto do progresso
+            const progressText = document.querySelector('.level-progress-text');
+            if (progressText) {
+                progressText.textContent = `${pointsInLevel}/100 para próximo nível`;
+            }
+        }
+
+        function renderRanking() {
+            const container = document.getElementById('rankingList');
+            if (!container) {
+                console.error('❌ Container rankingList não encontrado');
+                return;
+            }
+
+            console.log('🏆 Renderizando ranking...');
+
+            if (!employeeSync) {
+                console.error('❌ employeeSync não disponível');
+                container.innerHTML = '<div style="color: #fff; text-align: center; padding: 2rem;">Sistema de sincronização não disponível</div>';
+                return;
+            }
+
+            const allStats = employeeSync.getCachedStats();
+            const allUsers = employeeSync.getCachedUsers();
+            
+            console.log('📊 Dados para ranking:', {
+                stats: allStats.length,
+                users: allUsers.length
+            });
+            
+            const ranking = allStats
+                .filter(stat => {
+                    const user = allUsers.find(u => u.id === stat.user_id);
+                    return user && !user.is_admin;
+                })
+                .sort((a, b) => (b.total_points || 0) - (a.total_points || 0))
+                .slice(0, 10);
+
+            console.log('🏅 Ranking processado:', ranking.length, 'funcionários');
+
+            if (ranking.length === 0) {
+                container.innerHTML = `
+                    <div style="text-align: center; padding: 2rem; color: #fff;">
+                        <h4 style="margin-bottom: 1rem;">🏆 Ranking Vazio</h4>
+                        <p>Complete tarefas para aparecer no ranking!</p>
+                        <p style="font-size: 0.9rem; opacity: 0.7; margin-top: 0.5rem;">Dados: ${allUsers.length} usuários, ${allStats.length} estatísticas</p>
+                    </div>
+                `;
+                return;
+            }
+
+            const rankingHtml = ranking.map((stat, index) => {
+                const user = allUsers.find(u => u.id === stat.user_id);
+                if (!user) return '';
+
+                const isCurrentUser = user.id === employeeUser.id;
+                const medal = index < 3 ? ['🥇', '🥈', '🥉'][index] : `${index + 1}º`;
+                
+                return `
+                    <div style="
+                        background: ${isCurrentUser ? 'rgba(255, 215, 0, 0.2)' : 'rgba(255, 255, 255, 0.1)'};
+                        border: ${isCurrentUser ? '2px solid #FFD700' : '1px solid rgba(255, 255, 255, 0.2)'};
+                        border-radius: 10px;
+                        padding: 1rem;
+                        margin-bottom: 0.5rem;
+                        display: flex;
+                        align-items: center;
+                        justify-content: space-between;
+                    ">
+                        <div style="display: flex; align-items: center; gap: 1rem;">
+                            <div style="font-size: 1.2rem; font-weight: bold; color: #FFD700; min-width: 40px;">
+                                ${medal}
+                            </div>
+                            <div>
+                                <div style="font-weight: bold; color: ${isCurrentUser ? '#FFD700' : '#fff'}; font-size: 1rem;">
+                                    ${user.username} ${isCurrentUser ? '(Você)' : ''}
+                                </div>
+                                <div style="font-size: 0.8rem; color: rgba(255, 255, 255, 0.7);">
+                                    ${user.department || 'Funcionário'}
+                                </div>
+                            </div>
+                        </div>
+                        <div style="text-align: right;">
+                            <div style="font-weight: bold; color: #fff; font-size: 1.1rem;">
+                                ${stat.total_points || 0} pts
+                            </div>
+                            <div style="font-size: 0.8rem; color: #4CAF50;">
+                                ${stat.tasks_completed || 0} tarefas
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            container.innerHTML = rankingHtml;
+            console.log('✅ Ranking renderizado com sucesso!');
+        }
+
+        // Adicionar funções de navegação entre seções
+        function handleSectionChange(sectionName, triggerButton) {
+            document.querySelectorAll('.content-section').forEach(section => {
+                if (section) section.classList.add('hidden');
+            });
+
+            if (sectionName === 'tasks') {
+                const tasksSection = document.getElementById('tasksSection');
+                if (tasksSection) tasksSection.classList.remove('hidden');
+            } else if (sectionName === 'tasks-meta') {
+                const tasksMetaSection = document.getElementById('tasksMetaSection');
+                if (tasksMetaSection) tasksMetaSection.classList.remove('hidden');
+            }
+
+            const targetSection = document.getElementById(`${sectionName}Section`);
+            if (targetSection) {
+                targetSection.classList.remove('hidden');
+            }
+
+            document.querySelectorAll('.nav-button').forEach(btn => btn.classList.remove('active'));
+
+            let activeButton = triggerButton;
+            if (!activeButton) {
+                activeButton = document.querySelector(`.nav-button[data-section="${sectionName}"]`);
+            }
+            if (!activeButton) {
+                activeButton = document.querySelector('.nav-button[data-section="tasks"]');
+            }
+            if (activeButton) {
+                activeButton.classList.add('active');
+            }
+
+            if (sectionName === 'tasks') {
+                renderAvailableTasks();
+            } else if (sectionName === 'tasks-meta') {
+                renderMetaTasks();
+            } else if (sectionName === 'penalties') {
+                renderPenaltiesList();
+            }
+        }
+
+        // Funções de foto do perfil
+        function changeProfilePicture() {
+            document.getElementById('profilePictureInput').click();
+        }
+
+        async function handleProfilePictureChange(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            // Validar tipo de arquivo
+            if (!file.type.startsWith('image/')) {
+                showNotification('Por favor, selecione apenas arquivos de imagem', 'error');
+                return;
+            }
+
+            // Validar tamanho (máx 5MB)
+            if (file.size > 5 * 1024 * 1024) {
+                showNotification('A imagem deve ter no máximo 5MB', 'error');
+                return;
+            }
+
+            try {
+                // Converter para base64
+                const reader = new FileReader();
+                reader.onload = async function(e) {
+                    const base64Image = e.target.result;
+                    
+                    // Atualizar foto na interface imediatamente
+                    document.getElementById('profilePicture').src = base64Image;
+                    
+                    // Salvar no banco de dados usando o sync manager
+                    const supabaseClient = employeeSync.client;
+                    const { error } = await supabaseClient
+                        .from('users')
+                        .update({ 
+                            avatar_url: base64Image,
+                            avatar: base64Image,
+                            updated_at: new Date().toISOString()
+                        })
+                        .eq('id', employeeUser.id);
+
+                    if (error) {
+                        console.error('Erro ao salvar foto:', error);
+                        showNotification('Erro ao salvar foto do perfil', 'error');
+                        // Reverter mudança visual
+                        updateProfileInfo();
+                    } else {
+                        // Atualizar dados locais persistentemente
+                        employeeUser.avatar_url = base64Image;
+                        employeeUser.avatar = base64Image;
+                        localStorage.setItem('currentUser', JSON.stringify(employeeUser));
+                        
+                        // Forçar atualização do sync manager
+                        await employeeSync.syncUsers();
+                        
+                        showNotification('Foto do perfil atualizada com sucesso!', 'success');
+                        console.log('✅ Foto do perfil salva e sincronizada');
+                    }
+                };
+                reader.readAsDataURL(file);
+                
+            } catch (error) {
+                console.error('Erro ao processar imagem:', error);
+                showNotification('Erro ao processar imagem', 'error');
+            }
+        }
+
+        async function completeTask(taskId) {
+            try {
+                const result = await employeeSync.completeTask(employeeUser.id, taskId, employeeTasks.find(t => t.id === taskId)?.points || 0);
+                
+                if (result.success) {
+                    showNotification('Tarefa completada com sucesso! 🎉', 'success');
+                    
+                    // Efeitos visuais
+                    showTaskCompletionEffects(employeeTasks.find(t => t.id === taskId));
+                    
+                    // Recarregar dados
+                    await loadUserData();
+                    renderEmployeeInterface();
+                } else {
+                    showNotification(result.error || 'Erro ao completar tarefa', 'error');
+                }
+                
+            } catch (error) {
+                console.error('Erro ao completar tarefa:', error);
+                showNotification('Erro interno do sistema', 'error');
+            }
+        }
+
+        function showPenaltiesTab() {
+            const tab = document.getElementById('penaltiesSection');
+            if (tab) {
+                tab.classList.remove('hidden');
+                window.scrollTo({ top: tab.offsetTop - 100, behavior: 'smooth' });
+            }
+        }
+
+        function showTaskCompletionEffects(task) {
+            // Som
+            try {
+                const audio = new Audio('assets/audio/6bd07a19784043d98d63bd6958c479cd.mp3');
+                audio.volume = 0.3;
+                audio.play().catch(e => console.log('Som não disponível'));
+            } catch (e) {}
+
+            // Confetes
+            createConfetti();
+            
+            // Animação de pontos
+            showPointsAnimation(task.points);
+        }
+
+        function createConfetti() {
+            for (let i = 0; i < 50; i++) {
+                setTimeout(() => createConfettiPiece(), i * 10);
+            }
+        }
+
+        function createConfettiPiece() {
+            const confetti = document.createElement('div');
+            confetti.style.position = 'fixed';
+            confetti.style.width = '10px';
+            confetti.style.height = '10px';
+            confetti.style.backgroundColor = getRandomColor();
+            confetti.style.left = Math.random() * window.innerWidth + 'px';
+            confetti.style.top = '-10px';
+            confetti.style.zIndex = '9999';
+            confetti.style.borderRadius = '50%';
+            
+            document.body.appendChild(confetti);
+            
+            const animation = confetti.animate([
+                { transform: 'translateY(0px) rotate(0deg)', opacity: 1 },
+                { transform: `translateY(${window.innerHeight + 100}px) rotate(360deg)`, opacity: 0 }
+            ], {
+                duration: Math.random() * 3000 + 2000,
+                easing: 'cubic-bezier(0.5, 0, 0.5, 1)'
+            });
+            
+            animation.onfinish = () => confetti.remove();
+        }
+
+        function getRandomColor() {
+            const colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD', '#98D8C8'];
+            return colors[Math.floor(Math.random() * colors.length)];
+        }
+
+        function showPointsAnimation(points) {
+            const pointsEl = document.createElement('div');
+            pointsEl.textContent = `+${points} pontos!`;
+            pointsEl.style.position = 'fixed';
+            pointsEl.style.top = '50%';
+            pointsEl.style.left = '50%';
+            pointsEl.style.transform = 'translate(-50%, -50%)';
+            pointsEl.style.fontSize = '2rem';
+            pointsEl.style.fontWeight = 'bold';
+            pointsEl.style.color = '#4ECDC4';
+            pointsEl.style.zIndex = '9999';
+            pointsEl.style.textShadow = '2px 2px 4px rgba(0,0,0,0.5)';
+            pointsEl.style.pointerEvents = 'none';
+            
+            document.body.appendChild(pointsEl);
+            
+            const animation = pointsEl.animate([
+                { opacity: 0, transform: 'translate(-50%, -50%) scale(0.5)' },
+                { opacity: 1, transform: 'translate(-50%, -70%) scale(1.2)' },
+                { opacity: 0, transform: 'translate(-50%, -90%) scale(1)' }
+            ], {
+                duration: 2000,
+                easing: 'ease-out'
+            });
+            
+            animation.onfinish = () => pointsEl.remove();
+        }
+
+        function showNotification(message, type = 'info', duration = 5000) {
+            const notification = document.createElement('div');
+            notification.textContent = message;
+            
+            notification.style.position = 'fixed';
+            notification.style.top = '20px';
+            notification.style.right = '20px';
+            notification.style.padding = '15px 20px';
+            notification.style.borderRadius = '10px';
+            notification.style.color = 'white';
+            notification.style.fontSize = '14px';
+            notification.style.fontWeight = '600';
+            notification.style.zIndex = '10000';
+            notification.style.maxWidth = '320px';
+            notification.style.boxShadow = '0 4px 12px rgba(0,0,0,0.3)';
+            notification.style.lineHeight = '1.4';
+            
+            const colors = {
+                success: '#4ECDC4',
+                error: '#FF6B6B', 
+                warning: '#FFEAA7',
+                info: '#45B7D1'
+            };
+            
+            notification.style.backgroundColor = colors[type] || colors.info;
+            document.body.appendChild(notification);
+            
+            setTimeout(() => notification.remove(), duration);
+        }
+
+
+        async function initializeChat() {
+            console.log('💬 Agninha preparando mensagem...');
+
+            const balloon = document.querySelector('.agninha-speech__balloon');
+            const closeButton = document.querySelector('.agninha-speech__close');
+            const avatar = document.querySelector('.agninha-speech__avatar');
+            const coinButton = document.querySelector('[data-explain="coin"]');
+            const metaButton = document.querySelector('[data-explain="meta"]');
+            const explanationButtons = [coinButton, metaButton];
+            const initialMessage = 'Escolha uma das opções para saber como o FLOWER COINS funciona.';
+            const explanations = {
+                coin: 'Os Flower Coin são conquistados ao não faltar, não atrasar e manter seu ambiente de trabalho limpo. Aqui você pode acompanhar o seu progresso ao decorrer do mês.',
+                meta: 'O Flower Meta é conquistado através de suas metas e obrigações concluídas. No final do mês esses pontos são recebidos como dinheiro, com cada ponto valendo R$ 1,00.'
+            };
+            const cloudBox = ensureCloudBox();
+
+            stopCloudMessages();
+
+            if (balloon) {
+                balloon.classList.add('agninha-speech__balloon-hidden');
+            }
+
+            const setActiveButton = (activeBtn) => {
+                explanationButtons.forEach(btn => btn?.classList.remove('is-active'));
+                if (activeBtn) {
+                    activeBtn.classList.add('is-active');
+                }
+            };
+
+            const ensureBalloonVisible = () => {
+                if (balloon) {
+                    balloon.classList.remove('agninha-speech__balloon-hidden');
+                }
+            };
+
+            const handleExplanation = (type, button) => {
+                ensureBalloonVisible();
+                setActiveButton(button);
+                updateAgninhaMessage(explanations[type] || initialMessage);
+            };
+
+            if (closeButton) {
+                closeButton.addEventListener('click', () => {
+                    if (balloon) balloon.classList.add('agninha-speech__balloon-hidden');
+                    setActiveButton(null);
+                    updateAgninhaMessage(initialMessage);
+                    resumeCloudMessages(cloudBox);
+                    const styleMarker = document.getElementById('agninha-hidden-style');
+                    if (!styleMarker) {
+                        const styleEl = document.createElement('style');
+                        styleEl.id = 'agninha-hidden-style';
+                        styleEl.textContent = '.agninha-speech__balloon-hidden { opacity: 0; visibility: hidden; pointer-events: none; transform: translateY(10px); transition: opacity 0.25s ease, transform 0.25s ease; }';
+                        document.head.appendChild(styleEl);
+                    }
+                });
+            }
+
+            if (avatar) {
+                avatar.addEventListener('click', () => {
+                    if (!balloon) return;
+                    const isHidden = balloon.classList.contains('agninha-speech__balloon-hidden');
+                    if (isHidden) {
+                        balloon.classList.remove('agninha-speech__balloon-hidden');
+                        setActiveButton(null);
+                        updateAgninhaMessage(initialMessage);
+                    } else {
+                        balloon.classList.add('agninha-speech__balloon-hidden');
+                    }
+                });
+            }
+
+            if (coinButton) {
+                coinButton.addEventListener('click', () => handleExplanation('coin', coinButton));
+            }
+            if (metaButton) {
+                metaButton.addEventListener('click', () => handleExplanation('meta', metaButton));
+            }
+
+            updateAgninhaMessage(initialMessage);
+            startCloudMessages(cloudBox);
+        }
+
+        function getAgninhaPhilosophicalPhrases() {
+            return [
+                '“O sucesso nasce do querer, da determinação e persistência em se chegar a um objetivo.” – José de Alencar',
+                '“A persistência é o caminho do êxito.” – Charles Chaplin',
+                '“Acredite em si próprio e chegará um dia em que os outros não terão outra escolha senão acreditar com você.” – C. C. Hunter',
+                '“Pequenas ações diárias constroem grandes conquistas mensais.”',
+                '“Organização é o primeiro passo para a liberdade criativa no trabalho.”',
+                '“Seu esforço hoje é o bônus que você colhe amanhã.”',
+                '“Em cada tarefa cumprida há uma versão melhor de você surgindo.”',
+                '“Quando o ambiente floresce limpo, a mente floresce criativa.”',
+                '“Disciplina é saber o que você quer e lembrar disso o tempo todo.” – David Campbell',
+                '“Nada é tão contagioso quanto o entusiasmo.” – Samuel Taylor Coleridge',
+                '“Fazer o melhor nas condições que você tem é a melhor forma de honrar seus objetivos.”',
+                '“O progresso é o resultado da soma das pequenas vitórias diárias.”',
+                '“Metas claras transformam sonhos em planos realizáveis.”',
+                '“Cada responsabilidade honrada é um degrau a mais na sua jornada.”'
+            ];
+        }
+
+        function getCloudMessagePhrase(previousIndex = -1) {
+            const phrases = getAgninhaPhilosophicalPhrases();
+            if (!phrases.length) return 'Vamos continuar firmes nas metas!';
+            let nextIndex = Math.floor(Math.random() * phrases.length);
+            if (phrases.length > 1 && nextIndex === previousIndex) {
+                nextIndex = (nextIndex + 1) % phrases.length;
+            }
+            return { text: phrases[nextIndex], index: nextIndex };
+        }
+
+        function getTimeOfDayLabel(hour) {
+            if (hour >= 5 && hour < 12) return { label: 'manhã', key: 'morning', greeting: '🌅 Bom dia' };
+            if (hour >= 12 && hour < 18) return { label: 'tarde', key: 'afternoon', greeting: '☀️ Boa tarde' };
+            return { label: 'noite', key: 'evening', greeting: '🌙 Boa noite' };
+        }
+
+        async function sayHelloToUser() {
+            const currentUser = JSON.parse(localStorage.getItem('currentUser') || '{}');
+            const currentTime = new Date();
+            const hour = currentTime.getHours();
+            
+            const { label: timeOfDay, key: timeKey, greeting } = getTimeOfDayLabel(hour);
+
+            try {
+                if (!window.aiSdk || !window.aiSdk.openai || !window.aiSdk.ai || !window.ywConfig || !window.ywConfig.ai_config?.agninha_chat) {
+                    return `${greeting}! Fico feliz em te ver por aqui, ${currentUser.username || 'florzinha'}! 🌸 Vamos começar o dia com energia!`;
+                }
+
+                const openai = window.aiSdk.openai.createOpenAI({
+                    baseURL: 'https://api.youware.com/public/v1/ai',
+                    apiKey: 'sk-YOUWARE'
+                });
+
+                const config = window.ywConfig.ai_config.agninha_chat;
+                const systemPrompt = config.system_prompt({
+                    currentTime: `${timeOfDay} (${currentTime.getHours()}:${String(currentTime.getMinutes()).padStart(2, '0')})`,
+                    userName: currentUser.username || 'querido funcionário',
+                    situation: 'login_inicial'
+                });
+
+                const { text } = await window.aiSdk.ai.generateText({
+                    model: openai(config.model),
+                    messages: [
+                        { role: 'system', content: systemPrompt },
+                        { role: 'user', content: `${greeting}! Acabei de fazer login no sistema FLOWER COINS. Como você está hoje, Agninha?` }
+                    ],
+                    temperature: config.temperature,
+                    maxTokens: config.maxTokens
+                });
+
+                const cleanedText = typeof text === 'string' ? text.trim() : '';
+                console.log('🌸 Agninha saudou o usuário:', cleanedText.substring(0, 100) + '...');
+                return cleanedText || `${greeting}! Que alegria te ver, ${currentUser.username || 'florzinha'}! 🌸 Vamos arrasar juntos hoje!`;
+
+            } catch (error) {
+                console.error('❌ Erro na saudação da Agninha:', error);
+                return `${greeting}, ${currentUser.username || 'florzinha'}! 🌸 Bem-vindo(a) ao FLOWER COINS! Estou aqui para te apoiar em mais um dia produtivo! ✨`;
+            }
+        }
+
+
+        function updateAgninhaMessage(text) {
+            const messageEl = document.getElementById('agninhaMessage');
+            if (messageEl) {
+                messageEl.innerHTML = text;
+            }
+        }
+
+        function ensureCloudBox() {
+            let cloudContainer = document.querySelector('.agninha-cloud-box');
+            if (!cloudContainer) {
+                cloudContainer = document.createElement('div');
+                cloudContainer.className = 'agninha-cloud-box agninha-cloud-box-hidden';
+                cloudContainer.innerHTML = `
+                    <div class="agninha-cloud-box__content">
+                        <p class="agninha-cloud-box__text"></p>
+                    </div>
+                `;
+                const agninhaWrapper = document.querySelector('.agninha-speech');
+                if (agninhaWrapper) {
+                    agninhaWrapper.appendChild(cloudContainer);
+                }
+            }
+            return cloudContainer;
+        }
+
+        function updateCloudBoxMessage(cloudBox, phrase) {
+            if (!cloudBox) return;
+            const textElement = cloudBox.querySelector('.agninha-cloud-box__text');
+            if (textElement) {
+                textElement.textContent = phrase;
+            }
+            cloudBox.classList.remove('agninha-cloud-box-hidden');
+            cloudBox.classList.add('agninha-cloud-box-visible');
+        }
+
+        function hideCloudBox(cloudBox) {
+            if (!cloudBox) return;
+            cloudBox.classList.remove('agninha-cloud-box-visible');
+            cloudBox.classList.add('agninha-cloud-box-hidden');
+        }
+
+        function runCloudCycle(cloudBox) {
+            clearTimeout(agninhaCloudCycleTimeout);
+            clearTimeout(agninhaCloudHideTimeout);
+            clearTimeout(agninhaCloudResumeTimeout);
+
+            if (!cloudBox) return;
+
+            const { text, index } = getCloudMessagePhrase(agninhaLastCloudIndex);
+            agninhaLastCloudIndex = index;
+            updateCloudBoxMessage(cloudBox, text);
+
+            agninhaCloudHideTimeout = setTimeout(() => {
+                hideCloudBox(cloudBox);
+            }, 10000);
+
+            agninhaCloudCycleTimeout = setTimeout(() => {
+                runCloudCycle(cloudBox);
+            }, 40000);
+        }
+
+        function startCloudMessages(cloudBox) {
+            if (!cloudBox) return;
+            runCloudCycle(cloudBox);
+        }
+
+        function stopCloudMessages() {
+            clearTimeout(agninhaCloudCycleTimeout);
+            clearTimeout(agninhaCloudHideTimeout);
+            clearTimeout(agninhaCloudResumeTimeout);
+            agninhaCloudCycleTimeout = null;
+            agninhaCloudHideTimeout = null;
+            agninhaCloudResumeTimeout = null;
+            const cloudBox = document.querySelector('.agninha-cloud-box');
+            hideCloudBox(cloudBox);
+        }
+
+        function resumeCloudMessages(cloudBox) {
+            stopCloudMessages();
+            agninhaCloudResumeTimeout = setTimeout(() => {
+                startCloudMessages(cloudBox);
+            }, 40000);
+        }
+
+        function getFallbackMotivation() {
+            const now = new Date();
+            const { key, greeting } = getTimeOfDayLabel(now.getHours());
+            const dayIndex = Math.floor((now - new Date(now.getFullYear(), 0, 0)) / 86400000);
+            const phrases = window.FLORzinhaFallbacks?.dailyPhrases || [];
+            const greetingOptions = window.FLORzinhaFallbacks?.greetingsByTime?.[key] || [greeting];
+            const phrase = phrases.length ? phrases[dayIndex % phrases.length] : `${greeting}! É hora de brilhar hoje!`;
+            const randomGreeting = greetingOptions[Math.floor(Math.random() * greetingOptions.length)] || greeting;
+            return `${randomGreeting}! ${phrase}`;
+        }
+
+        async function showDailyMotivationalPhrase(options = {}) {
+            const { notifyFallback = false } = options;
+            try {
+                const currentUser = JSON.parse(localStorage.getItem('currentUser') || '{}');
+                const currentTime = new Date();
+                const { label: timeOfDay, greeting } = getTimeOfDayLabel(currentTime.getHours());
+
+                if (!window.aiSdk || !window.aiSdk.openai || !window.aiSdk.ai || !window.ywConfig || !window.ywConfig.ai_config?.agninha_chat) {
+                    updateAgninhaMessage(getFallbackMotivation());
+                    return;
+                }
+
+                const openai = window.aiSdk.openai.createOpenAI({
+                    baseURL: 'https://api.youware.com/public/v1/ai',
+                    apiKey: 'sk-YOUWARE'
+                });
+
+                const config = window.ywConfig.ai_config.agninha_chat;
+                const systemPrompt = config.system_prompt({
+                    currentTime: `${timeOfDay} (${currentTime.getHours()}:${String(currentTime.getMinutes()).padStart(2, '0')})`,
+                    userName: currentUser.username || 'querido funcionário',
+                    situation: 'frase_do_dia'
+                });
+
+                const { text } = await window.aiSdk.ai.generateText({
+                    model: openai(config.model),
+                    messages: [
+                        { role: 'system', content: systemPrompt },
+                        { role: 'user', content: `${greeting}! Traga uma frase motivadora personalizada para o meu dia de trabalho de hoje.` }
+                    ],
+                    temperature: config.temperature,
+                    maxTokens: config.maxTokens
+                });
+
+                const motivationalText = typeof text === 'string' && text.trim().length ? text.trim() : getFallbackMotivation();
+                updateAgninhaMessage(motivationalText);
+                console.log('🌸 Frase motivacional da Agninha:', motivationalText);
+
+            } catch (error) {
+                console.error('❌ Erro na frase motivacional:', error);
+                const fallback = getFallbackMotivation();
+                updateAgninhaMessage(fallback);
+                console.log('🌸 Frase fallback:', fallback);
+            }
+        }
+
+        function logout() {
+            localStorage.removeItem('currentUser');
+            showNotification('Logout realizado!', 'success');
+            setTimeout(() => window.location.href = 'index.html', 1500);
+        }
+
+        // Adicionar CSS para navigation buttons
+        const navStyle = document.createElement('style');
+        navStyle.textContent = `
+            .nav-button {
+                background: rgba(255, 255, 255, 0.85);
+                border: none;
+                border-radius: 25px;
+                padding: 12px 24px;
+                color: #111827;
+                font-weight: 700;
+                cursor: pointer;
+                transition: all 0.3s ease;
+                margin: 0 5px;
+                backdrop-filter: blur(10px);
+                display: inline-flex;
+                align-items: center;
+                gap: 10px;
+            }
+            
+            .nav-button__icon-wrapper {
+                display: inline-flex;
+                width: 28px;
+                height: 28px;
+                border-radius: 50%;
+                overflow: hidden;
+                background: rgba(255, 255, 255, 1);
+                align-items: center;
+                justify-content: center;
+                box-shadow: inset 0 0 4px rgba(0, 0, 0, 0.2);
+            }
+
+            .nav-button__icon {
+                width: 90%;
+                height: 90%;
+                object-fit: contain;
+            }
+
+            .nav-button--coin {
+                border: 1px solid rgba(255, 215, 0, 0.8);
+                box-shadow: 0 0 15px rgba(255, 215, 0, 0.35);
+            }
+
+            .nav-button--meta {
+                border: 1px solid rgba(94, 234, 212, 0.8);
+                box-shadow: 0 0 15px rgba(94, 234, 212, 0.35);
+            }
+            
+            .nav-button:hover, .nav-button.active {
+                background: rgba(255, 255, 255, 0.5);
+                transform: translateY(-2px);
+                box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+            }
+            
+            .content-section {
+                margin-top: 2rem;
+                padding: 2rem;
+                background: rgba(255, 255, 255, 0.1);
+                border-radius: 15px;
+                backdrop-filter: blur(10px);
+            }
+            
+            .content-section.hidden {
+                display: none;
+            }
+            
+            .nav-menu {
+                display: flex;
+                justify-content: center;
+                margin-bottom: 2rem;
+                flex-wrap: wrap;
+                gap: 10px;
+            }
+        `;
+        document.head.appendChild(navStyle);
+    </script>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Dancing+Script:wght@400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <style>
+        body {
+            min-height: 100vh;
+            font-family: 'Poppins', sans-serif;
+            font-weight: 600;
+            position: relative;
+            overflow-x: hidden;
+            color: #111827;
+        }
+
+        body::before,
+        body::after,
+        .video-background {
+            display: none !important;
+        }
+
+        .background-layers {
+            position: fixed;
+            inset: 0;
+            overflow: hidden;
+            z-index: -2;
+        }
+
+        .background-layers__gradient {
+            position: absolute;
+            inset: 0;
+            background-image: linear-gradient(
+                135deg,
+                #FFB6C1 0%,
+                #FFE4E1 20%,
+                #DDA0DD 40%,
+                #98FB98 60%,
+                #87CEEB 80%,
+                #F0E68C 100%
+            );
+            background-size: 180% 180%;
+            animation: gradientShift 18s ease infinite;
+            will-change: transform;
+        }
+
+        .background-layers__texture {
+            position: absolute;
+            inset: 0;
+            background-image: radial-gradient(rgba(255, 255, 255, 0.12) 1px, transparent 1px);
+            background-size: 40px 40px;
+            opacity: 0.35;
+        }
+
+        .background-layers__glow {
+            position: absolute;
+            inset: 0;
+            background: radial-gradient(circle at 20% 20%, rgba(255, 255, 255, 0.15), transparent 40%),
+                        radial-gradient(circle at 80% 80%, rgba(255, 255, 255, 0.1), transparent 45%);
+            mix-blend-mode: screen;
+            opacity: 0.85;
+        }
+
+        .background-layers__overlay {
+            position: absolute;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.18);
+        }
+
+        @keyframes gradientShift {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+        
+
+        
+        .glass-card {
+            background: rgba(255, 255, 255, 0.55);
+            box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            border-radius: 15px;
+            border: 1px solid rgba(255, 255, 255, 0.4);
+            position: relative;
+            z-index: 2;
+        }
+
+        /* Estilos para tarefas */
+        .task-item {
+            background: rgba(255, 255, 255, 0.9);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-bottom: 1rem;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            transition: all 0.3s ease;
+        }
+
+        .task-item:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+        }
+
+        .task-item.completed {
+            opacity: 0.6;
+            background: rgba(200, 200, 200, 0.85);
+        }
+
+        .task-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .task-title {
+            font-size: 1.2rem;
+            font-weight: bold;
+            color: #2d3748;
+        }
+
+        .task-points {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+            padding: 0.5rem 1rem;
+            border-radius: 20px;
+            font-weight: bold;
+            font-size: 0.9rem;
+        }
+
+        .task-description {
+            color: #4a5568;
+            margin-bottom: 1rem;
+            line-height: 1.5;
+        }
+
+        .task-meta {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+            flex-wrap: wrap;
+        }
+
+        .task-category, .task-priority, .task-modality {
+            padding: 0.25rem 0.75rem;
+            border-radius: 12px;
+            font-size: 0.8rem;
+            font-weight: 500;
+        }
+
+        .task-category {
+            background: #e6fffa;
+            color: #234e52;
+        }
+
+        .task-priority {
+            background: #fef5e7;
+            color: #744210;
+        }
+
+        .task-priority.priority-alta {
+            background: #fed7d7;
+            color: #742a2a;
+        }
+
+        .task-priority.priority-crítica {
+            background: #fed7d7;
+            color: #742a2a;
+            font-weight: bold;
+        }
+
+        .task-modality {
+            background: #e9d8fd;
+            color: #553c9a;
+        }
+
+        .task-footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .complete-task-btn {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white;
+            border: none;
+            padding: 0.75rem 1.5rem;
+            border-radius: 25px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .complete-task-btn:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(79, 172, 254, 0.4);
+        }
+
+        .complete-task-btn:disabled,
+        .complete-task-btn.completed {
+            background: #9ca3af;
+            cursor: not-allowed;
+        }
+
+        .profile-card {
+            text-align: center;
+            padding: 2rem;
+            background: rgba(255, 255, 255, 0.82);
+            border-radius: 20px;
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+            position: relative;
+            z-index: 2;
+        }
+
+        .profile-picture {
+            width: 120px;
+            height: 120px;
+            border-radius: 50%;
+            border: 4px solid rgba(255, 255, 255, 0.8);
+            object-fit: cover;
+            margin: 0 auto 1rem auto;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+            cursor: pointer;
+            transition: transform 0.3s ease;
+        }
+
+        .profile-picture:hover {
+            transform: scale(1.05);
+        }
+
+        .employee-name {
+            font-size: 2rem;
+            font-weight: 800;
+            color: #111827;
+            text-shadow: 0 1px 3px rgba(17, 24, 39, 0.2);
+            margin-bottom: 1rem;
+        }
+
+        .coins-meta-section {
+            background: rgba(255, 255, 255, 0.82);
+            border-radius: 15px;
+            padding: 1.5rem;
+            margin: 1rem 0;
+            position: relative;
+            z-index: 2;
+        }
+
+        .coin-display {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+
+        .coin-title {
+            margin: 0 0 0.75rem 0;
+            font-size: 1.4rem;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            text-align: center;
+        }
+
+        .coin-title--gold {
+            color: #FFD700;
+            text-shadow: 0 0 14px rgba(255, 215, 0, 0.75);
+        }
+
+        .coin-title--meta {
+            background: linear-gradient(90deg, #FF6B6B, #FFD93D, #6BCB77, #4D96FF);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            color: transparent;
+            text-shadow: 0 0 12px rgba(77, 150, 255, 0.35);
+        }
+
+        .coin-icon {
+            width: 40px;
+            height: 40px;
+            animation: coinSpin 3s linear infinite;
+        }
+
+        @keyframes coinSpin {
+            0% { transform: rotateY(0deg); }
+            100% { transform: rotateY(360deg); }
+        }
+
+        .coin-amount {
+            font-size: 2rem;
+            font-weight: bold;
+            color: #FFD700;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+        }
+
+        .calendar-container {
+            background: rgba(255, 255, 255, 0.5);
+            border-radius: 15px;
+            padding: 1.5rem;
+            margin: 1rem 0;
+            position: relative;
+            z-index: 2;
+        }
+
+        .calendar-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .calendar-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 0.5rem;
+            text-align: center;
+        }
+
+        .tasks-readonly {
+            background: rgba(255, 255, 255, 0.5);
+            border-radius: 15px;
+            padding: 1.5rem;
+            margin: 1rem 0;
+            position: relative;
+            z-index: 2;
+        }
+
+        .task-item {
+            background: rgba(255, 255, 255, 0.78);
+            border-radius: 10px;
+            padding: 1rem;
+            margin-bottom: 1rem;
+            border-left: 4px solid #FFD700;
+        }
+
+        .penalties-section {
+            background: rgba(255, 255, 255, 0.65);
+            border-radius: 15px;
+            padding: 1.5rem;
+            margin: 1rem 0;
+            position: relative;
+            z-index: 2;
+            backdrop-filter: blur(12px);
+        }
+
+        .penalties-title {
+            color: #1f2933;
+            font-size: 1.5rem;
+            font-weight: 700;
+            text-align: center;
+            margin-bottom: 1.5rem;
+        }
+
+        .penalties-list {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+            font-weight: 600;
+        }
+
+        .penalty-empty {
+            background: rgba(255, 255, 255, 0.25);
+            border-radius: 12px;
+            padding: 1.2rem;
+            text-align: center;
+            color: rgba(255, 255, 255, 0.85);
+            border: 1px dashed rgba(255, 255, 255, 0.4);
+        }
+
+        .penalty-group {
+            background: rgba(0, 0, 0, 0.15);
+            border-radius: 12px;
+            padding: 1rem;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .penalty-month-title {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-weight: 600;
+            color: #fff;
+            margin-bottom: 0.75rem;
+            font-size: 1.05rem;
+        }
+
+        .penalty-entry {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 1rem;
+            padding: 0.9rem 1rem;
+            background: rgba(255, 255, 255, 0.75);
+            border-radius: 10px;
+            margin-bottom: 0.75rem;
+            border-left: 4px solid rgba(255, 107, 107, 0.8);
+        }
+
+        .penalty-entry:last-child {
+            margin-bottom: 0;
+        }
+
+        .penalty-entry-title {
+            font-weight: 700;
+            color: #c05621;
+            margin-bottom: 0.35rem;
+            font-size: 1rem;
+        }
+
+        .penalty-entry-reason {
+            font-size: 0.9rem;
+            color: #334155;
+            font-weight: 500;
+        }
+
+        .penalty-entry-date {
+            text-align: right;
+            font-size: 0.85rem;
+            color: #4b5563;
+            display: flex;
+            flex-direction: column;
+            gap: 0.2rem;
+            min-width: 140px;
+            font-weight: 600;
+        }
+
+        .penalty-entry-amount {
+            color: #FF6B6B;
+            font-weight: 700;
+            font-size: 1rem;
+        }
+
+        .task-title {
+            font-weight: 700;
+            color: #1f2937;
+            margin-bottom: 0.5rem;
+        }
+
+        .task-description {
+            color: #374151;
+            font-size: 0.95rem;
+            margin-bottom: 0.5rem;
+            font-weight: 500;
+        }
+
+        .task-points {
+            color: #ca8a04;
+            font-weight: 700;
+            font-size: 0.95rem;
+        }
+
+        .agninha-speech {
+            position: fixed;
+            bottom: 32px;
+            right: 32px;
+            display: flex;
+            align-items: flex-end;
+            gap: 18px;
+            z-index: 1000;
+        }
+
+        .agninha-speech__balloon-hidden {
+            opacity: 0;
+            visibility: hidden;
+            pointer-events: none;
+            transform: translateY(10px);
+            transition: opacity 0.25s ease, transform 0.25s ease;
+        }
+
+        .agninha-speech__avatar {
+            width: 96px;
+            height: 96px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #FF6B6B, #4ECDC4);
+            padding: 6px;
+            box-shadow: 0 16px 35px rgba(0, 0, 0, 0.22);
+            animation: agninha-float 3s ease-in-out infinite;
+            cursor: pointer;
+        }
+
+        @keyframes agninha-float {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-6px); }
+        }
+
+        .agninha-speech__balloon {
+            position: relative;
+            max-width: min(340px, 80vw);
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 22px;
+            padding: 18px 24px;
+            box-shadow: 0 20px 36px rgba(0, 0, 0, 0.2);
+            border: 1px solid rgba(255, 255, 255, 0.7);
+            backdrop-filter: blur(12px);
+        }
+
+        .agninha-speech__balloon::after {
+            content: '';
+            position: absolute;
+            bottom: -14px;
+            right: 30px;
+            width: 24px;
+            height: 24px;
+            background: rgba(255, 255, 255, 0.95);
+            border-right: 1px solid rgba(255, 255, 255, 0.7);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.7);
+            transform: rotate(45deg);
+            box-shadow: 8px 8px 20px rgba(0, 0, 0, 0.1);
+        }
+
+        .agninha-speech__close {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            width: 28px;
+            height: 28px;
+            border: none;
+            border-radius: 50%;
+            background: rgba(64, 42, 78, 0.08);
+            color: #402A4E;
+            font-size: 1.1rem;
+            font-weight: 700;
+            line-height: 1;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .agninha-speech__close:hover {
+            background: rgba(64, 42, 78, 0.18);
+            transform: scale(1.05);
+        }
+
+        .agninha-speech__title {
+            margin: 0 0 12px 0;
+            font-size: 1.1rem;
+            font-weight: 700;
+            color: #402A4E;
+            text-align: center;
+            letter-spacing: 0.08em;
+        }
+
+        .agninha-speech__actions {
+            display: flex;
+            justify-content: center;
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+
+        .agninha-speech__button {
+            padding: 8px 14px;
+            border-radius: 999px;
+            border: none;
+            font-weight: 600;
+            font-size: 0.9rem;
+            cursor: pointer;
+            background: rgba(78, 205, 196, 0.15);
+            color: #2C3E50;
+            transition: all 0.2s ease;
+            box-shadow: inset 0 0 0 1px rgba(78, 205, 196, 0.4);
+        }
+
+        .agninha-speech__button:hover {
+            transform: translateY(-1px);
+            box-shadow: inset 0 0 0 1px rgba(78, 205, 196, 0.6), 0 8px 18px rgba(78, 205, 196, 0.25);
+        }
+
+        .agninha-speech__button.is-active {
+            background: linear-gradient(135deg, #4ECDC4, #45B7D1);
+            color: #ffffff;
+            box-shadow: 0 10px 22px rgba(78, 205, 196, 0.35);
+        }
+
+        .agninha-speech__text {
+            margin: 0;
+            color: #402A4E;
+            font-size: 1.05rem;
+            line-height: 1.55;
+            font-weight: 600;
+        }
+
+        .agninha-cloud-box {
+            position: absolute;
+            bottom: 128px;
+            right: 140px;
+            max-width: 260px;
+            transform: translate(0, 20px);
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.4s ease, transform 0.4s ease;
+        }
+
+        .agninha-cloud-box-visible {
+            opacity: 1;
+            transform: translate(0, 0);
+            pointer-events: auto;
+        }
+
+        .agninha-cloud-box-hidden {
+            opacity: 0;
+            transform: translate(0, 20px);
+            pointer-events: none;
+        }
+
+        .agninha-cloud-box__content {
+            background: #ffffff;
+            border-radius: 50px;
+            padding: 18px 24px;
+            box-shadow: 0 15px 30px rgba(64, 42, 78, 0.18);
+            position: relative;
+            border: 1px solid rgba(255, 204, 229, 0.65);
+        }
+
+        .agninha-cloud-box__content::after,
+        .agninha-cloud-box__content::before {
+            content: '';
+            position: absolute;
+            background: #ffffff;
+            border-radius: 50%;
+        }
+
+        .agninha-cloud-box__content::after {
+            width: 38px;
+            height: 38px;
+            bottom: -12px;
+            right: 35px;
+            box-shadow: 0 10px 20px rgba(64, 42, 78, 0.12);
+        }
+
+        .agninha-cloud-box__content::before {
+            width: 55px;
+            height: 55px;
+            bottom: -20px;
+            right: 15px;
+            box-shadow: 0 10px 25px rgba(64, 42, 78, 0.1);
+        }
+
+        .agninha-cloud-box__text {
+            margin: 0;
+            color: #402A4E;
+            font-size: 0.98rem;
+            line-height: 1.5;
+            font-weight: 600;
+        }
+
+        .motivational-popup {
+            position: fixed;
+            bottom: 120px;
+            right: 20px;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 15px;
+            padding: 1rem;
+            max-width: 250px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+            z-index: 1001;
+            display: none;
+            animation: popupSlide 0.3s ease-out;
+        }
+
+        @keyframes popupSlide {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+
+        .nav-menu {
+            display: flex;
+            justify-content: center;
+            gap: 1rem;
+            margin: 2rem 0;
+            flex-wrap: wrap;
+            position: relative;
+            z-index: 2;
+        }
+
+        .nav-button {
+            background: rgba(255, 255, 255, 0.82);
+            border: none;
+            border-radius: 15px;
+            padding: 1rem 2rem;
+            color: #111827;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            backdrop-filter: blur(4px);
+        }
+
+        .nav-button:hover, .nav-button.active {
+            background: rgba(255, 255, 255, 0.5);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+        }
+
+        .content-section {
+            position: relative;
+            z-index: 2;
+            color: #111827;
+            font-weight: 600;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        /* File input styling for profile picture upload */
+        #profilePictureInput {
+            display: none;
+        }
+
+        .profile-picture-container {
+            position: relative;
+            display: inline-block;
+        }
+
+        .profile-picture-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+            cursor: pointer;
+        }
+
+        .profile-picture-container:hover .profile-picture-overlay {
+            opacity: 1;
+        }
+
+        .month-selector {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+
+        .month-selector button {
+            background: rgba(255, 255, 255, 0.3);
+            border: none;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            color: #fff;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background 0.3s ease;
+        }
+
+        .month-selector button:hover {
+            background: rgba(255, 255, 255, 0.5);
+        }
+
+        .month-year {
+            font-size: 1.2rem;
+            font-weight: bold;
+            color: #fff;
+        }
+
+        /* Responsive design */
+        @media (max-width: 768px) {
+            .nav-menu {
+                flex-direction: column;
+                align-items: center;
+            }
+            
+            .nav-button {
+                width: 100%;
+                max-width: 300px;
+            }
+
+            .profile-card {
+                margin: 1rem;
+                padding: 1.5rem;
+            }
+            
+            .employee-name {
+                font-size: 1.5rem;
+            }
+            
+            .agninha-speech {
+                bottom: 16px;
+                right: 16px;
+                gap: 12px;
+            }
+            
+            .agninha-speech__avatar {
+                width: 72px;
+                height: 72px;
+                cursor: pointer;
+            }
+            
+            .agninha-speech__balloon {
+                padding: 14px 18px;
+                max-width: min(280px, 85vw);
+            }
+            
+            .agninha-speech__balloon::after {
+                right: 18px;
+                width: 18px;
+                height: 18px;
+            }
+
+            .agninha-speech__text {
+                font-size: 0.95rem;
+            }
+            
+            .motivational-popup {
+                right: 15px;
+                bottom: 85px;
+                max-width: 200px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="background-layers" aria-hidden="true">
+        <div class="background-layers__gradient"></div>
+        <div class="background-layers__texture"></div>
+        <div class="background-layers__glow"></div>
+        <div class="background-layers__overlay"></div>
+    </div>
+    
+    <div class="container mx-auto p-4">
+        <!-- Profile Section -->
+        <div class="profile-card">
+            <div class="profile-picture-container">
+                <img id="profilePicture" class="profile-picture" src="https://via.placeholder.com/120" alt="Foto do Funcionário">
+                <div class="profile-picture-overlay" onclick="changeProfilePicture()">
+                    <i class="fas fa-camera text-white text-xl"></i>
+                </div>
+            </div>
+            <input type="file" id="profilePictureInput" accept="image/*" onchange="handleProfilePictureChange(event)">
+            <div class="employee-name" id="employeeName">Nome do Funcionário</div>
+            
+            <!-- Flower Coins Display -->
+            <div class="coins-meta-section">
+                <div class="flex justify-center">
+                    <div class="coin-display flex-col">
+                        <h3 class="coin-title coin-title--gold">FLOWER COIN</h3>
+                        <img src="assets/img/flower-coin-upload.png" alt="Flower Coin" class="coin-icon">
+                        <div class="coin-amount" id="flowerCoinsAmount">0</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Flower Meta Display -->
+            <div class="coins-meta-section" style="margin-top: 1rem;">
+                <h3 class="coin-title coin-title--meta">FLOWER META</h3>
+                <div class="flex justify-center">
+                    <div class="coin-display flex-col">
+                        <img src="assets/img/flower-meta-upload.png" alt="Flower Meta" class="coin-icon">
+                        <div class="coin-amount" id="flowerMetaAmount">0</div>
+                        <div style="color: #fff; font-size: 0.9rem;">Metas Especiais</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Navigation Menu -->
+        <div class="nav-menu">
+            <button class="nav-button nav-button--coin active" data-section="tasks">
+                <span class="nav-button__icon-wrapper">
+                    <img src="assets/img/flower-coin-upload.png" alt="Tarefas Flower Coin" class="nav-button__icon">
+                </span>
+                Tarefas Flower Coin
+            </button>
+            <button class="nav-button nav-button--meta" data-section="tasks-meta">
+                <span class="nav-button__icon-wrapper">
+                    <img src="assets/img/FLOWER META.png" alt="Tarefas Flower Meta" class="nav-button__icon">
+                </span>
+                Tarefas Flower Meta
+            </button>
+            <button class="nav-button" data-section="logout">
+                <i class="fas fa-sign-out-alt mr-2"></i>Sair
+            </button>
+        </div>
+
+        <!-- Tasks Section (Read-only) -->
+        <div id="tasksSection" class="content-section">
+            <div class="tasks-readonly">
+                <h3 style="color: #fff; font-size: 1.5rem; font-weight: bold; text-align: center; margin-bottom: 1rem;">
+                    📋 Tarefas Disponíveis
+                </h3>
+                <div id="tasksList">
+                    <!-- Tasks will be loaded here -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Meta Tasks Section (employee-specific) -->
+        <div id="tasksMetaSection" class="content-section hidden">
+            <div class="tasks-readonly">
+                <h3 style="color: #fff; font-size: 1.5rem; font-weight: bold; text-align: center; margin-bottom: 1rem;">
+                    ⭐ Tarefas Flower Meta (específicas)
+                </h3>
+                <div id="tasksMetaList">
+                    <!-- Meta tasks will be loaded here -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Penalties Section -->
+        <div id="penaltiesSection" class="content-section hidden">
+            <div class="penalties-section">
+                <h3 class="penalties-title">⚠️ Minhas Penalidades</h3>
+                <div id="penaltiesList" class="penalties-list">
+                    <div class="penalty-empty">Nenhuma penalidade registrada até o momento.</div>
+                </div>
+            </div>
+        </div>
+
+
+    </div>
+
+    <!-- Agninha Balloon -->
+    <div class="agninha-speech">
+        <div class="agninha-speech__balloon">
+            <button type="button" class="agninha-speech__close" aria-label="Fechar mensagem da Agninha">×</button>
+            <h3 class="agninha-speech__title">ME EXPLIQUE</h3>
+            <div class="agninha-speech__actions">
+                <button type="button" class="agninha-speech__button" data-explain="coin">Flower Coin</button>
+                <button type="button" class="agninha-speech__button" data-explain="meta">Flower Meta</button>
+            </div>
+            <p class="agninha-speech__text" id="agninhaMessage">Escolha uma das opções acima para saber como tudo funciona.</p>
+        </div>
+        <div class="agninha-cloud-box agninha-cloud-box-hidden">
+            <div class="agninha-cloud-box__content">
+                <p class="agninha-cloud-box__text"></p>
+            </div>
+        </div>
+        <img class="agninha-speech__avatar" src="assets/img/agninha.png" alt="Agninha">
+    </div>
+
+    <script>
+        window.FLORzinhaFallbacks = {
+            greetingsByTime: {
+                morning: [
+                    "Bom dia! ☀️ Que seu dia seja repleto de conquistas!",
+                    "Bom dia, querido(a)! 🌅 Hoje é um novo dia para brilhar!",
+                    "Olá! ☀️ Que tal começarmos este dia com energia total?",
+                    "Bom dia! 🌞 Estou aqui para te apoiar em mais um dia incrível!"
+                ],
+                afternoon: [
+                    "Boa tarde! 🌤️ Como está sendo seu dia até agora?",
+                    "Boa tarde, campeão(ã)! ☀️ Continue com essa dedicação!",
+                    "Oi! 🌞 Espero que sua tarde esteja sendo produtiva!",
+                    "Boa tarde! 🌅 Que tal darmos mais um impulso neste dia?"
+                ],
+                evening: [
+                    "Boa noite! 🌙 Hora de finalizar o dia com chave de ouro!",
+                    "Boa noite! ⭐ Que seu trabalho de hoje seja recompensado!",
+                    "Olá! 🌃 Ainda dá tempo de fazer a diferença hoje!",
+                    "Boa noite! 🌙 Estou aqui para te motivar até o fim do dia!"
+                ]
+            },
+            dailyPhrases: [
+                "💪 Frase do dia: 'O sucesso é a soma de pequenos esforços repetidos dia após dia!'",
+                "✨ Frase do dia: 'Cada desafio é uma oportunidade de crescer e se superar!'", 
+                "🚀 Frase do dia: 'Acredite em você mesmo, você é mais forte do que imagina!'",
+                "🌟 Frase do dia: 'O trabalho em equipe faz o sonho funcionar!'",
+                "💎 Frase do dia: 'Sua dedicação hoje é o seu sucesso de amanhã!'",
+                "🎯 Frase do dia: 'Foque no progresso, não na perfeição!'",
+                "🌈 Frase do dia: 'Transforme seus obstáculos em oportunidades!'",
+                "⚡ Frase do dia: 'A persistência é o caminho do êxito!'",
+                "🔥 Frase do dia: 'Você não precisa ser perfeito, precisa ser consistente!'",
+                "🏆 Frase do dia: 'Grandes coisas nunca vêm de zonas de conforto!'",
+                "💫 Frase do dia: 'Seja a mudança que você quer ver no mundo!'",
+                "🌻 Frase do dia: 'O otimismo é a fé em ação!'",
+                "⭐ Frase do dia: 'Cada pequeno passo te leva mais perto do seu objetivo!'",
+                "🎨 Frase do dia: 'Sua criatividade é seu superpoder!'",
+                "🏅 Frase do dia: 'O esforço de hoje é a vitória de amanhã!'",
+                "🌱 Frase do dia: 'Plante hoje os resultados que quer colher amanhã!'",
+                "💝 Frase do dia: 'Sua contribuição faz toda a diferença!'",
+                "🎪 Frase do dia: 'Trabalhe com paixão e os resultados aparecerão!'",
+                "🚁 Frase do dia: 'Voe alto, mas mantenha os pés no chão!'",
+                "🎭 Frase do dia: 'Seja protagonista da sua própria história!'",
+                "🌺 Frase do dia: 'A gentileza é uma linguagem universal!'",
+                "🎵 Frase do dia: 'Encontre o ritmo certo e dance com os desafios!'",
+                "🎁 Frase do dia: 'Cada dia é um presente, por isso se chama presente!'",
+                "🌏 Frase do dia: 'Pequenas ações geram grandes transformações!'",
+                "🎯 Frase do dia: 'Mire na lua, mesmo que erre, cairá entre as estrelas!'",
+                "🎪 Frase do dia: 'A vida é uma festa quando você trabalha com prazer!'",
+                "🏰 Frase do dia: 'Construa seu sucesso tijolo por tijolo!'",
+                "🎨 Frase do dia: 'Pinte seu dia com as cores da determinação!'",
+                "🚀 Frase do dia: 'Seja o foguete que impulsiona a equipe!'",
+                "⚽ Frase do dia: 'Jogue em equipe e todo mundo ganha!'",
+                "🌈 Frase do dia: 'Seu esforço floresce em resultados brilhantes!'",
+                "🌸 Frase do dia: 'Floresça onde você foi plantado e inspire outros!'",
+                "🌺 Frase do dia: 'Espalhe gentileza e veja o jardim ao seu redor florescer!'",
+                "🌼 Frase do dia: 'Sua dedicação perfuma o ambiente com produtividade!'",
+                "🌷 Frase do dia: 'Cada tarefa concluída é uma pétala a mais no seu bouquet de conquistas!'"
+            ]
+        };
+
+        async function initializeApp() {
+            try {
+                // Check if user is logged in - for testing create test user
+                let currentUser = JSON.parse(localStorage.getItem('currentUser') || 'null');
+                if (!currentUser || !currentUser.username) {
+                    currentUser = {
+                        username: 'FUNCIONARIO TESTE',
+                        encrypted_yw_id: 'test_user_123456',
+                        flower_coins: 150,
+                        flower_meta: 5,
+                        level: 3
+                    };
+                    localStorage.setItem('currentUser', JSON.stringify(currentUser));
+                    console.log('👤 Usuário de teste criado para demonstração');
+                }
+                
+                // Get user name from current user data or backend
+                const displayName = currentUser.username || currentUser.display_name || 'Funcionário';
+                document.getElementById('employeeName').textContent = displayName;
+                
+                await loadUserData();
+                await loadTasks();
+                generateCalendar();
+            } catch (error) {
+                console.error('Erro ao inicializar app:', error);
+            }
+        }
+
+        async function legacyBackendLoadUserData() {
+            try {
+                if (typeof BACKEND_URL === 'undefined') return;
+                const response = await fetch(`${BACKEND_URL}/api/user/info`);
+                if (response.ok) {
+                    const result = await response.json();
+                    if (result.success && result.user) {
+                        const user = result.user;
+                        document.getElementById('flowerCoinsAmount').textContent = user.flower_coins || 0;
+                        document.getElementById('flowerMetaAmount').textContent = user.flower_meta || 0;
+                        const displayName = (window.currentUser && window.currentUser.username) || user.display_name || user.encrypted_yw_id.slice(-8);
+                        document.getElementById('employeeName').textContent = displayName;
+                        if (user.profile_photo) {
+                            document.getElementById('profilePicture').src = user.profile_photo;
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error('Erro (legacy) ao carregar dados do usuário:', error);
+            }
+        }
+
+        async function legacyBackendLoadTasks() {
+            try {
+                if (typeof BACKEND_URL === 'undefined') return;
+                const response = await fetch(`${BACKEND_URL}/api/tasks`);
+                if (response.ok) {
+                    const result = await response.json();
+                    if (result.success) {
+                        const tasksList = document.getElementById('tasksList');
+                        tasksList.innerHTML = (result.tasks || []).map(task => `
+                            <div class="task-item">
+                                <div class="task-title">${task.title}</div>
+                                <div class="task-description">${task.description || 'Sem descrição'}</div>
+                                <div class="task-points">💰 ${task.flower_coins} Flower Coins ${task.flower_meta > 0 ? ` • ⭐ ${task.flower_meta} Flower Meta` : ''}</div>
+                            </div>
+                        `).join('');
+                    }
+                }
+            } catch (error) {
+                console.error('Erro (legacy) ao carregar tarefas:', error);
+            }
+        }
+
+        async function legacyBackendGenerateCalendar() {
+            const monthNames = [
+                'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
+                'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'
+            ];
+
+            document.getElementById('currentMonthYear').textContent = `${monthNames[currentMonth]} ${currentYear}`;
+
+            // Calcular pontos mensais baseado no progresso de tarefas do usuário
+            let monthlyFlowerCoins = 0;
+            let monthlyFlowerMeta = 0;
+            let dailyProgress = {};
+            
+            try {
+                // Buscar progresso do usuário para este mês
+                const startOfMonth = new Date(currentYear, currentMonth, 1).toISOString();
+                const endOfMonth = new Date(currentYear, currentMonth + 1, 0, 23, 59, 59).toISOString();
+                
+                console.log('📅 Buscando progresso entre:', startOfMonth, 'e', endOfMonth);
+                
+                // Obter progresso do sync manager
+                const allProgress = employeeSync.getCachedProgress();
+                const monthProgress = allProgress.filter(progress => 
+                    progress.user_id === employeeUser.id &&
+                    progress.completed_at >= startOfMonth &&
+                    progress.completed_at <= endOfMonth
+                );
+                
+                console.log('📊 Progresso do mês encontrado:', monthProgress.length, 'tarefas');
+                
+                // Calcular pontos por dia
+                monthProgress.forEach(progress => {
+                    const completedDate = new Date(progress.completed_at);
+                    const dayKey = completedDate.getDate();
+                    
+                    if (!dailyProgress[dayKey]) {
+                        dailyProgress[dayKey] = {
+                            flower_coins: 0,
+                            flower_meta: 0,
+                            tasks_completed: 0
+                        };
+                    }
+                    
+                    // Todos os pontos são considerados flower coins por padrão
+                    dailyProgress[dayKey].flower_coins += progress.points_earned || 0;
+                    dailyProgress[dayKey].tasks_completed += 1;
+                    
+                    monthlyFlowerCoins += progress.points_earned || 0;
+                });
+                
+                // Buscar flowers meta distribuídos pelo admin para este mês
+                const userStats = employeeSync.getCachedStats().find(s => s.user_id === employeeUser.id);
+                if (userStats) {
+                    monthlyFlowerMeta = userStats.flowers_meta_distributed || 0;
+                }
+                
+                console.log('💰 Total do mês - Flower Coins:', monthlyFlowerCoins, 'Flowers Meta:', monthlyFlowerMeta);
+                
+            } catch (error) {
+                console.error('Erro ao calcular dados mensais:', error);
+            }
+
+            // Calendário simplificado mostrando apenas resumo mensal
+            const calendarGrid = document.getElementById('calendarGrid');
+            
+            const calendarHTML = `
+                <div style="text-align: center; padding: 1rem;">
+                    <div style="background: rgba(255, 255, 255, 0.15); border-radius: 15px; padding: 1.5rem; max-width: 350px; margin: 0 auto;">
+                        <div style="display: flex; align-items: center; justify-content: center; gap: 1rem; margin-bottom: 1rem;">
+                            <div style="width: 40px; height: 40px; background: linear-gradient(45deg, #FFD700, #FFA500); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.2rem;">
+                                📅
+                            </div>
+                            <h4 style="color: #fff; font-size: 1.4rem; font-weight: bold; margin: 0;">
+                                ${monthNames[currentMonth]} ${currentYear}
+                            </h4>
+                        </div>
+                        
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem;">
+                            <div style="background: rgba(255, 215, 0, 0.2); border-radius: 10px; padding: 1rem; text-align: center;">
+                                <img src="assets/img/flower-coin-new.png" style="width: 24px; height: 24px; margin-bottom: 0.5rem;" alt="FC">
+                                <div style="color: #FFD700; font-weight: bold; font-size: 1.3rem;">${monthlyFlowerCoins}</div>
+                                <div style="color: #fff; font-size: 0.75rem; opacity: 0.9;">Flower Coins</div>
+                            </div>
+                            <div style="background: rgba(76, 175, 80, 0.2); border-radius: 10px; padding: 1rem; text-align: center;">
+                                <img src="assets/img/flower-meta-new.png" style="width: 24px; height: 24px; margin-bottom: 0.5rem;" alt="FM">
+                                <div style="color: #4CAF50; font-weight: bold; font-size: 1.3rem;">${monthlyFlowerMeta}</div>
+                                <div style="color: #fff; font-size: 0.75rem; opacity: 0.9;">Flower Meta</div>
+                            </div>
+                        </div>
+                        
+                        ${currentMonth === new Date().getMonth() && currentYear === new Date().getFullYear() ? 
+                            '<div style="background: rgba(255, 107, 107, 0.2); border-radius: 8px; padding: 0.75rem; color: #fff; font-size: 0.8rem;"><span style="margin-right: 0.5rem;">⚠️</span>Mês atual - Pontos zerarão dia 1º do próximo mês</div>' : 
+                            '<div style="background: rgba(76, 175, 80, 0.2); border-radius: 8px; padding: 0.75rem; color: #fff; font-size: 0.8rem;"><span style="margin-right: 0.5rem;">💾</span>Histórico permanente salvo</div>'
+                        }
+                    </div>
+                </div>
+            `;
+
+            calendarGrid.innerHTML = calendarHTML;
+        }
+
+        function legacyBackendChangeMonth(direction) {
+            currentMonth += direction;
+            if (currentMonth > 11) {
+                currentMonth = 0;
+                currentYear++;
+            } else if (currentMonth < 0) {
+                currentMonth = 11;
+                currentYear--;
+            }
+            generateCalendar();
+        }
+
+        function showSection(sectionName, button) {
+            console.log('🔁 Troca de seção solicitada:', sectionName);
+            handleSectionChange(sectionName, button);
+
+            if (sectionName === 'penalties') {
+                const refreshPenalties = () => {
+                    const hasGetCached = employeeSync && typeof employeeSync.getCachedPenalties === 'function';
+                    const allPenalties = hasGetCached ? employeeSync.getCachedPenalties() : [];
+                    employeePenalties = buildEmployeePenalties(allPenalties);
+                    renderPenaltiesList();
+                    showPenaltiesTab();
+                };
+
+                if (employeeSync && typeof employeeSync.syncPenalties === 'function') {
+                    employeeSync.syncPenalties()
+                        .then(refreshPenalties)
+                        .catch(error => {
+                            console.error('Erro ao sincronizar penalidades:', error);
+                            refreshPenalties();
+                        });
+                } else {
+                    refreshPenalties();
+                }
+
+                const container = document.getElementById('penaltiesSection');
+                if (container) {
+                    container.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }
+            }
+        }
+
+        window.showSection = showSection;
+
+        function changeProfilePicture() {
+            document.getElementById('profilePictureInput').click();
+        }
+
+        async function handleProfilePictureChange(event) {
+            const file = event.target.files[0];
+            if (file) {
+                try {
+                    // Check file size (limit to ~1MB before base64 encoding)
+                    if (file.size > 1024 * 1024) {
+                        alert('Imagem muito grande. Por favor, escolha uma imagem menor que 1MB.');
+                        return;
+                    }
+
+                    const reader = new FileReader();
+                    reader.onload = async function(e) {
+                        const photoData = e.target.result;
+                        
+                        // Update UI immediately
+                        document.getElementById('profilePicture').src = photoData;
+                        
+                        // Save to backend with proper authentication
+                        try {
+                            // For now, save directly to localStorage since we have test users
+                            const currentUser = JSON.parse(localStorage.getItem('currentUser') || '{}');
+                            currentUser.profile_photo = photoData;
+                            localStorage.setItem('currentUser', JSON.stringify(currentUser));
+                            
+                            // Try to save to backend if possible
+                            try {
+                                const userInfo = await getUserInfo();
+                                if (userInfo && userInfo.encrypted_yw_id) {
+                                    const response = await fetch(`${BACKEND_URL}/api/user/photo`, {
+                                        method: 'POST',
+                                        headers: {
+                                            'Content-Type': 'application/json',
+                                            'X-Encrypted-Yw-ID': userInfo.encrypted_yw_id
+                                        },
+                                        body: JSON.stringify({ photoData })
+                                    });
+
+                                    if (response.ok) {
+                                        const result = await response.json();
+                                        if (result.success) {
+                                            console.log('✅ Foto salva no backend com sucesso!');
+                                        }
+                                    }
+                                }
+                            } catch (backendError) {
+                                console.log('⚠️ Backend não disponível, foto salva localmente');
+                            }
+                            
+                            // Show success message
+                            console.log('✅ Foto de perfil salva com sucesso!');
+                        } catch (error) {
+                            console.error('Erro ao salvar foto:', error);
+                            alert('Erro de conexão ao salvar foto.');
+                        }
+                    };
+                    reader.readAsDataURL(file);
+                } catch (error) {
+                    console.error('Erro ao processar imagem:', error);
+                    alert('Erro ao processar imagem.');
+                }
+            }
+        }
+
+        function showMotivationalMessage() {
+            const popup = document.getElementById('motivationalPopup');
+            const messageDiv = document.getElementById('motivationalMessage');
+            
+            // Determinar saudação por horário
+            const currentHour = new Date().getHours();
+            let timeOfDay;
+            if (currentHour >= 5 && currentHour < 12) {
+                timeOfDay = 'morning';
+            } else if (currentHour >= 12 && currentHour < 18) {
+                timeOfDay = 'afternoon';
+            } else {
+                timeOfDay = 'evening';
+            }
+            
+            // Selecionar saudação aleatória do período
+            const greetings = greetingsByTime[timeOfDay];
+            const randomGreeting = greetings[Math.floor(Math.random() * greetings.length)];
+            
+            // Selecionar frase do dia baseada na data (mesma frase para o mesmo dia)
+            const today = new Date();
+            const dayOfYear = Math.floor((today - new Date(today.getFullYear(), 0, 0)) / 1000 / 60 / 60 / 24);
+            const dailyPhrase = dailyMotivationalPhrases[dayOfYear % dailyMotivationalPhrases.length];
+            
+            // Combinar saudação com frase do dia
+            const fullMessage = randomGreeting + "\n\n" + dailyPhrase;
+            
+            messageDiv.innerHTML = fullMessage.replace(/\n/g, '<br>');
+            popup.style.display = 'block';
+
+            // Auto hide after 10 seconds (mais tempo para ler)
+            setTimeout(() => {
+                hideMotivationalMessage();
+            }, 10000);
+        }
+
+        function hideMotivationalMessage() {
+            document.getElementById('motivationalPopup').style.display = 'none';
+        }
+
+        function showMotivationalMessageOnLogin() {
+            // Show motivational message after 2 seconds on login
+            setTimeout(() => {
+                showMotivationalMessage();
+            }, 2000);
+        }
+
+        async function legacyBackendLoadRanking() {
+            try {
+                const rankingContainer = document.getElementById('rankingList');
+                console.log('🏆 Carregando ranking...');
+                
+                // Obter dados reais do Supabase via sync manager
+                const allStats = employeeSync.getCachedStats();
+                const allUsers = employeeSync.getCachedUsers();
+                
+                // Criar ranking baseado nos dados reais
+                const realRanking = allStats
+                    .filter(stat => {
+                        const user = allUsers.find(u => u.id === stat.user_id);
+                        return user && !user.is_admin; // Apenas funcionários
+                    })
+                    .map(stat => {
+                        const user = allUsers.find(u => u.id === stat.user_id);
+                        return {
+                            id: stat.user_id,
+                            name: user.username,
+                            flower_coins: stat.total_points || 0,
+                            flower_meta: stat.flowers_meta_distributed || 0,
+                            tasks_completed: stat.tasks_completed || 0,
+                            profile_photo: user.avatar_url || user.avatar || generateAvatarSVG(user.username),
+                            is_current_user: stat.user_id === employeeUser.id
+                        };
+                    })
+                    .sort((a, b) => b.flower_coins - a.flower_coins) // Ordenar por pontos
+                    .map((user, index) => ({
+                        ...user,
+                        position: index + 1
+                    }));
+                
+                console.log('📊 Ranking processado:', realRanking.length, 'usuários');
+                
+                if (realRanking.length === 0) {
+                    rankingContainer.innerHTML = `
+                        <div style="text-align: center; padding: 2rem; color: #fff;">
+                            <h4 style="margin-bottom: 1rem;">🏆 Ranking em Breve</h4>
+                            <p>Complete tarefas para aparecer no ranking!</p>
+                        </div>
+                    `;
+                    return;
+                }
+                
+                // Gerar HTML do ranking
+                let rankingHTML = '';
+                realRanking.forEach((user, index) => {
+                    const isCurrentUser = user.is_current_user;
+                    
+                    let medalIcon = '';
+                    if (index === 0) medalIcon = '🥇';
+                    else if (index === 1) medalIcon = '🥈';
+                    else if (index === 2) medalIcon = '🥉';
+                    else medalIcon = `${index + 1}º`;
+                    
+                    rankingHTML += `
+                        <div class="ranking-item" style="
+                            background: ${isCurrentUser ? 'rgba(255, 215, 0, 0.2)' : 'rgba(255, 255, 255, 0.1)'};
+                            border: ${isCurrentUser ? '2px solid #FFD700' : '1px solid rgba(255, 255, 255, 0.2)'};
+                            border-radius: 10px;
+                            padding: 1rem;
+                            margin-bottom: 0.5rem;
+                            display: flex;
+                            align-items: center;
+                            gap: 1rem;
+                            ${isCurrentUser ? 'box-shadow: 0 4px 15px rgba(255, 215, 0, 0.3);' : ''}
+                        ">
+                            <div class="ranking-position" style="
+                                font-size: 1.5rem;
+                                font-weight: bold;
+                                color: #FFD700;
+                                min-width: 60px;
+                                text-align: center;
+                            ">
+                                ${medalIcon}
+                            </div>
+                            
+                            <div class="user-photo" style="
+                                width: 50px;
+                                height: 50px;
+                                border-radius: 50%;
+                                overflow: hidden;
+                                border: 2px solid ${index < 3 ? '#FFD700' : '#fff'};
+                            ">
+                                <img src="${user.profile_photo}" alt="${user.name}" style="
+                                    width: 100%;
+                                    height: 100%;
+                                    object-fit: cover;
+                                " onerror="this.src='${generateAvatarSVG(user.name)}'">
+                            </div>
+                            
+                            <div class="user-info" style="flex: 1;">
+                                <div class="user-name" style="
+                                    color: #fff;
+                                    font-weight: bold;
+                                    font-size: 1.1rem;
+                                    ${isCurrentUser ? 'color: #FFD700; text-shadow: 0 0 10px #FFD700;' : ''}
+                                ">
+                                    ${user.name} ${isCurrentUser ? '(Você)' : ''}
+                                </div>
+                                <div class="user-stats" style="
+                                    color: rgba(255, 255, 255, 0.8);
+                                    font-size: 0.9rem;
+                                    margin-top: 0.25rem;
+                                    display: flex;
+                                    gap: 1rem;
+                                    align-items: center;
+                                ">
+                                    <div style="display: flex; align-items: center; gap: 0.25rem;">
+                                        <img src="assets/img/flower-coin-new.png" style="width: 16px; height: 16px;" alt="FC">
+                                        <span>${user.flower_coins}</span>
+                                    </div>
+                                    <div style="display: flex; align-items: center; gap: 0.25rem;">
+                                        <img src="assets/img/flower-meta-new.png" style="width: 16px; height: 16px;" alt="FM">
+                                        <span>${user.flower_meta}</span>
+                                    </div>
+                                    <span style="color: #FFD700; font-weight: bold; margin-left: 0.5rem;">
+                                        📋 ${user.tasks_completed} tarefas
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                });
+                
+                rankingContainer.innerHTML = rankingHTML;
+                
+                rankingContainer.innerHTML = rankingHTML;
+                console.log('✅ Ranking carregado com sucesso:', realRanking.length, 'usuários');
+                
+            } catch (error) {
+                console.error('Erro ao carregar ranking:', error);
+                document.getElementById('rankingList').innerHTML = `
+                    <div style="color: #fff; text-align: center; padding: 2rem;">
+                        <h4>❌ Erro ao carregar ranking</h4>
+                        <p>Tente novamente em alguns instantes</p>
+                    </div>
+                `;
+            }
+        }
+        
+        // Função para gerar avatar SVG
+        function generateAvatarSVG(name) {
+            const colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD', '#98D8C8'];
+            const initial = name ? name.charAt(0).toUpperCase() : '?';
+            const color = colors[name ? name.length % colors.length : 0];
+            
+            return `data:image/svg+xml;base64,${btoa(`
+                <svg width="60" height="60" viewBox="0 0 60 60" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="30" cy="30" r="30" fill="${color}"/>
+                    <text x="30" y="38" text-anchor="middle" fill="white" font-size="20" font-weight="bold">${initial}</text>
+                </svg>
+            `)}`;
+        }
+
+        function logoutLegacy() {
+            localStorage.removeItem('flowerCoinsUser');
+            localStorage.removeItem('currentUser');
+            window.location.href = 'index.html';
+        }
+    </script>
+</body>
+</html>
